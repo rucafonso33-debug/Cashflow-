@@ -27,16 +27,24 @@ export interface FutureEvent {
   date: string; // ISO string
 }
 
+export interface Movement {
+  name: string;
+  amount: number;
+  type: 'income' | 'expense' | 'spending' | 'event';
+}
+
 export interface ForecastWeek {
   week_number: number;
   start_date: string;
   end_date: string;
+  start_balance: number;
   projected_balance: number;
   simulated_balance: number;
   is_below_threshold: boolean;
   is_sim_below_threshold: boolean;
   events: string[];
   incomes: string[];
+  movements: Movement[];
 }
 
 export interface SimulationState {

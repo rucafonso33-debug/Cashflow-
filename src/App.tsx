@@ -56,7 +56,7 @@ import {
   isSameDay
 } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { AppSettings, Income, FixedExpense, FutureEvent, ForecastWeek, SimulationState, AIAnalysis, ChatMessage, FinancialGoal } from './types';
+import { AppSettings, Income, FixedExpense, FutureEvent, ForecastWeek, SimulationState, AIAnalysis, ChatMessage, FinancialGoal, Movement } from './types';
 import { generateFinancialAnalysis, askFinancialQuestion } from './services/aiService';
 import ReactMarkdown from 'react-markdown';
 import { clsx, type ClassValue } from 'clsx';
@@ -101,6 +101,9 @@ export default function App() {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isAsking, setIsAsking] = useState(false);
   const [chatInput, setChatInput] = useState('');
+  const [selectedWeek, setSelectedWeek] = useState<ForecastWeek | null>(null);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [settingsModalType, setSettingsModalType] = useState<'balance' | 'spending' | 'threshold'>('balance');
 
   useEffect(() => {
     fetchData();
@@ -213,6 +216,9 @@ export default function App() {
       
       const weekIncomes: string[] = [];
       const weekEvents: string[] = [];
+      const movements: Movement[] = [];
+      const startBalance = runningBalance;
+      
       let weekIncomeTotal = 0;
       let weekExpenseTotal = 0;
       
@@ -222,6 +228,14 @@ export default function App() {
       // Weekly spending estimate
       weekExpenseTotal += settings.weekly_spending_estimate;
       weekSimExpenseTotal += settings.weekly_spending_estimate + simulation.weeklySpendingDelta;
+      
+      movements.push({
+        name: 'Gasto semanal estimado',
+        amount: simulation.isActive 
+          ? settings.weekly_spending_estimate + simulation.weeklySpendingDelta
+          : settings.weekly_spending_estimate,
+        type: 'spending'
+      });
 
       // Check incomes and fixed expenses for each day of the week
       weekDays.forEach(day => {
@@ -232,6 +246,11 @@ export default function App() {
             weekIncomeTotal += inc.amount;
             weekSimIncomeTotal += inc.amount;
             weekIncomes.push(`${inc.name} (${inc.amount})`);
+            movements.push({
+              name: inc.name,
+              amount: inc.amount,
+              type: 'income'
+            });
           }
         });
 
@@ -240,6 +259,11 @@ export default function App() {
             weekExpenseTotal += exp.amount;
             weekSimExpenseTotal += exp.amount;
             weekEvents.push(`${exp.name} (-${exp.amount})`);
+            movements.push({
+              name: exp.name,
+              amount: exp.amount,
+              type: 'expense'
+            });
           }
         });
       });
@@ -251,6 +275,11 @@ export default function App() {
           weekExpenseTotal += evt.amount;
           weekSimExpenseTotal += evt.amount;
           weekEvents.push(`${evt.description} (-${evt.amount})`);
+          movements.push({
+            name: evt.description,
+            amount: evt.amount,
+            type: 'event'
+          });
         }
       });
 
@@ -259,6 +288,13 @@ export default function App() {
         const evtDate = parseISO(evt.date);
         if (isWithinInterval(evtDate, { start: weekStart, end: weekEnd })) {
           weekSimExpenseTotal += evt.amount;
+          if (simulation.isActive) {
+            movements.push({
+              name: `(Sim) ${evt.description}`,
+              amount: evt.amount,
+              type: 'event'
+            });
+          }
         }
       });
 
@@ -267,6 +303,13 @@ export default function App() {
         const incDate = parseISO(inc.date);
         if (isWithinInterval(incDate, { start: weekStart, end: weekEnd })) {
           weekSimIncomeTotal += inc.amount;
+          if (simulation.isActive) {
+            movements.push({
+              name: `(Sim) ${inc.description}`,
+              amount: inc.amount,
+              type: 'income'
+            });
+          }
         }
       });
 
@@ -277,12 +320,14 @@ export default function App() {
         week_number: i + 1,
         start_date: format(weekStart, 'dd/MM'),
         end_date: format(weekEnd, 'dd/MM'),
+        start_balance: startBalance,
         projected_balance: runningBalance,
         simulated_balance: runningSimBalance,
         is_below_threshold: runningBalance < settings.safety_threshold,
         is_sim_below_threshold: runningSimBalance < settings.safety_threshold,
         events: weekEvents,
-        incomes: weekIncomes
+        incomes: weekIncomes,
+        movements: movements
       });
     }
     return result;
@@ -424,6 +469,21 @@ export default function App() {
     }
   };
 
+  const handleUpdateSettings = async (newSettings: Partial<AppSettings>) => {
+    try {
+      const updated = { ...settings, ...newSettings };
+      await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+      setSettings(updated);
+      setIsSettingsModalOpen(false);
+    } catch (error) {
+      console.error('Error updating settings:', error);
+    }
+  };
+
   if (loading) return <div className="flex items-center justify-center h-screen">Carregando...</div>;
 
   return (
@@ -473,15 +533,35 @@ export default function App() {
               <div className="relative z-10">
                 <div className="flex items-center justify-between">
                   <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider">Saldo Atual</p>
-                  <div className="bg-white/10 px-2 py-1 rounded-lg flex items-center gap-1.5">
+                  <button 
+                    onClick={() => {
+                      setSettingsModalType('threshold');
+                      setIsSettingsModalOpen(true);
+                    }}
+                    className="bg-white/10 px-2 py-1 rounded-lg flex items-center gap-1.5 hover:bg-white/20 transition-colors"
+                  >
                     <Target size={12} className="text-zinc-400" />
                     <span className="text-[10px] font-bold uppercase text-zinc-300">Meta: {formatCurrency(settings.safety_threshold)}</span>
-                  </div>
+                  </button>
                 </div>
-                <h2 className="text-4xl font-bold mt-2 tracking-tight">{formatCurrency(settings.current_balance)}</h2>
+                <h2 
+                  onClick={() => {
+                    setSettingsModalType('balance');
+                    setIsSettingsModalOpen(true);
+                  }}
+                  className="text-4xl font-bold mt-2 tracking-tight cursor-pointer hover:text-zinc-300 transition-colors"
+                >
+                  {formatCurrency(settings.current_balance)}
+                </h2>
                 
                 <div className="mt-8 grid grid-cols-2 gap-3">
-                  <div className="bg-white/5 rounded-2xl p-3 border border-white/5">
+                  <div 
+                    onClick={() => {
+                      setSettingsModalType('spending');
+                      setIsSettingsModalOpen(true);
+                    }}
+                    className="bg-white/5 rounded-2xl p-3 border border-white/5 cursor-pointer hover:bg-white/10 transition-colors"
+                  >
                     <p className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Gasto Semanal</p>
                     <p className="text-sm font-bold">{formatCurrency(settings.weekly_spending_estimate)}</p>
                   </div>
@@ -743,6 +823,12 @@ export default function App() {
                         )}>
                           {formatCurrency(simulation.isActive ? week.simulated_balance : week.projected_balance)}
                         </p>
+                        <button 
+                          onClick={() => setSelectedWeek(week)}
+                          className="mt-1 text-[10px] font-bold text-zinc-400 uppercase hover:text-zinc-600 flex items-center gap-1 transition-colors"
+                        >
+                          <Info size={12} /> Ver explicação
+                        </button>
                       </div>
                       {(simulation.isActive ? week.is_sim_below_threshold : week.is_below_threshold) && (
                         <p className="text-[10px] text-rose-500 font-bold flex items-center justify-end gap-1 mt-1.5">
@@ -1714,6 +1800,181 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Forecast Explanation Modal */}
+      {selectedWeek && (
+        <ForecastExplanation 
+          week={selectedWeek} 
+          onClose={() => setSelectedWeek(null)} 
+          formatCurrency={formatCurrency}
+          settings={settings}
+        />
+      )}
+
+      {/* Settings Quick Edit Modal */}
+      {isSettingsModalOpen && (
+        <SettingsQuickEdit 
+          type={settingsModalType}
+          settings={settings}
+          onClose={() => setIsSettingsModalOpen(false)}
+          onSave={handleUpdateSettings}
+        />
+      )}
+    </div>
+  );
+}
+
+function ForecastExplanation({ week, onClose, formatCurrency, settings }: { 
+  week: ForecastWeek; 
+  onClose: () => void; 
+  formatCurrency: (v: number) => string;
+  settings: AppSettings;
+}) {
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300">
+      <div 
+        className="bg-white w-full max-w-lg rounded-t-[32px] sm:rounded-[32px] overflow-hidden shadow-2xl animate-in slide-in-from-bottom-10 duration-500"
+      >
+        <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
+          <div>
+            <h3 className="text-lg font-black text-zinc-900 tracking-tight">Explicação da Previsão</h3>
+            <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
+              Semana {week.week_number} — {week.start_date} até {week.end_date}
+            </p>
+          </div>
+          <button 
+            onClick={onClose}
+            className="w-10 h-10 rounded-2xl bg-white border border-zinc-200 flex items-center justify-center text-zinc-400 hover:text-zinc-900 hover:border-zinc-300 transition-all shadow-sm"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        
+        <div className="p-6 max-h-[70vh] overflow-y-auto space-y-6">
+          {/* Summary */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="bg-zinc-50 rounded-2xl p-4 border border-zinc-100">
+              <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Saldo Inicial</p>
+              <p className="text-lg font-black text-zinc-900">{formatCurrency(week.start_balance)}</p>
+            </div>
+            <div className="bg-zinc-900 rounded-2xl p-4 border border-zinc-800">
+              <p className="text-[10px] font-bold text-zinc-500 uppercase mb-1">Saldo Final</p>
+              <p className="text-lg font-black text-white">{formatCurrency(week.projected_balance)}</p>
+            </div>
+          </div>
+
+          {/* Movements */}
+          <div className="space-y-3">
+            <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-1">Movimentações da Semana</h4>
+            <div className="space-y-2">
+              {week.movements.map((m, idx) => (
+                <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-zinc-50/50 border border-zinc-100">
+                  <div className="flex items-center gap-3">
+                    <div className={cn(
+                      "w-8 h-8 rounded-lg flex items-center justify-center",
+                      m.type === 'income' ? "bg-emerald-100 text-emerald-600" : 
+                      m.type === 'expense' ? "bg-rose-100 text-rose-600" :
+                      m.type === 'spending' ? "bg-amber-100 text-amber-600" : "bg-zinc-100 text-zinc-600"
+                    )}>
+                      {m.type === 'income' ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-zinc-900">{m.name}</p>
+                      <p className="text-[10px] font-medium text-zinc-400 uppercase">{m.type === 'income' ? 'Receita' : m.type === 'spending' ? 'Gasto Estimado' : 'Despesa'}</p>
+                    </div>
+                  </div>
+                  <p className={cn(
+                    "text-sm font-black",
+                    m.type === 'income' ? "text-emerald-600" : "text-rose-600"
+                  )}>
+                    {m.type === 'income' ? '+' : '-'}{formatCurrency(m.amount)}
+                  </p>
+                </div>
+              ))}
+              {week.movements.length === 0 && (
+                <p className="text-center py-4 text-sm text-zinc-400 italic">Nenhuma movimentação específica nesta semana.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Warning */}
+          {week.is_below_threshold && (
+            <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 flex items-start gap-3">
+              <AlertTriangle className="text-rose-500 shrink-0" size={20} />
+              <div>
+                <p className="text-sm font-bold text-rose-900">Atenção ao Limite</p>
+                <p className="text-xs text-rose-600 font-medium mt-0.5">
+                  ⚠ Saldo abaixo do limite de segurança ({formatCurrency(settings.safety_threshold)}) nesta semana.
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="p-6 bg-zinc-50 border-t border-zinc-100">
+          <button 
+            onClick={onClose}
+            className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-xl shadow-zinc-200"
+          >
+            Entendido
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SettingsQuickEdit({ type, settings, onClose, onSave }: {
+  type: 'balance' | 'spending' | 'threshold';
+  settings: AppSettings;
+  onClose: () => void;
+  onSave: (s: Partial<AppSettings>) => void;
+}) {
+  const [value, setValue] = useState(
+    type === 'balance' ? settings.current_balance :
+    type === 'spending' ? settings.weekly_spending_estimate :
+    settings.safety_threshold
+  );
+
+  const title = type === 'balance' ? 'Saldo Atual' :
+                type === 'spending' ? 'Gasto Semanal Estimado' :
+                'Limite de Segurança';
+
+  const field = type === 'balance' ? 'current_balance' :
+                type === 'spending' ? 'weekly_spending_estimate' :
+                'safety_threshold';
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300">
+      <div className="bg-white w-full max-sm rounded-t-[32px] sm:rounded-[32px] overflow-hidden shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
+        <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
+          <h3 className="text-lg font-black text-zinc-900 tracking-tight">Alterar {title}</h3>
+          <button 
+            onClick={onClose}
+            className="w-10 h-10 rounded-2xl bg-white border border-zinc-200 flex items-center justify-center text-zinc-400 hover:text-zinc-900 hover:border-zinc-300 transition-all shadow-sm"
+          >
+            <X size={20} />
+          </button>
+        </div>
+        <div className="p-6 space-y-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Novo Valor (CHF)</label>
+            <input 
+              type="number" 
+              value={value}
+              onChange={(e) => setValue(Number(e.target.value))}
+              autoFocus
+              className="w-full bg-zinc-50 border-none rounded-2xl px-5 py-4 text-2xl font-black outline-none focus:ring-2 focus:ring-zinc-900 transition-all shadow-inner" 
+            />
+          </div>
+          <button 
+            onClick={() => onSave({ [field]: value })}
+            className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-xl shadow-zinc-200 flex items-center justify-center gap-2"
+          >
+            <Save size={18} /> Guardar Alteração
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
