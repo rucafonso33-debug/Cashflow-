@@ -55,7 +55,7 @@ import {
   eachDayOfInterval,
   isSameDay
 } from 'date-fns';
-import { ptBR } from 'date-fns/locale';
+import { enUS } from 'date-fns/locale';
 import { AppSettings, Income, FixedExpense, FutureEvent, ForecastWeek, SimulationState, AIAnalysis, ChatMessage, FinancialGoal, Movement } from './types';
 import { generateFinancialAnalysis, askFinancialQuestion } from './services/aiService';
 import ReactMarkdown from 'react-markdown';
@@ -66,8 +66,6 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const CURRENCY = 'CHF';
-
 type Tab = 'forecast' | 'setup' | 'events' | 'goals';
 
 export default function App() {
@@ -76,13 +74,17 @@ export default function App() {
     current_balance: 0,
     weekly_spending_estimate: 0,
     safety_threshold: 1000,
-    is_couple_mode: true
+    is_couple_mode: true,
+    currency: 'CHF',
+    remittance_currency: 'EUR',
+    exchange_rate: 1.05
   });
   const [incomes, setIncomes] = useState<Income[]>([]);
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([]);
   const [events, setEvents] = useState<FutureEvent[]>([]);
   const [goals, setGoals] = useState<FinancialGoal[]>([]);
   const [loading, setLoading] = useState(true);
+  const [forecastWeeks, setForecastWeeks] = useState(12);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState<'income' | 'expense' | 'event' | 'goal'>('income');
   const [editingItem, setEditingItem] = useState<any>(null);
@@ -209,7 +211,7 @@ export default function App() {
     let runningSimBalance = settings.current_balance;
     const today = new Date();
     
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < forecastWeeks; i++) {
       const weekStart = addWeeks(startOfWeek(today), i);
       const weekEnd = endOfWeek(weekStart);
       const weekDays = eachDayOfInterval({ start: weekStart, end: weekEnd });
@@ -230,7 +232,7 @@ export default function App() {
       weekSimExpenseTotal += settings.weekly_spending_estimate + simulation.weeklySpendingDelta;
       
       movements.push({
-        name: 'Gasto semanal estimado',
+        name: 'Estimated weekly spending',
         amount: simulation.isActive 
           ? settings.weekly_spending_estimate + simulation.weeklySpendingDelta
           : settings.weekly_spending_estimate,
@@ -318,8 +320,8 @@ export default function App() {
 
       result.push({
         week_number: i + 1,
-        start_date: format(weekStart, 'dd/MM'),
-        end_date: format(weekEnd, 'dd/MM'),
+        start_date: weekStart.toISOString(),
+        end_date: weekEnd.toISOString(),
         start_balance: startBalance,
         projected_balance: runningBalance,
         simulated_balance: runningSimBalance,
@@ -366,13 +368,13 @@ export default function App() {
     if (firstWeekBelow) {
       alerts.push({
         type: 'danger',
-        message: `Atenção: saldo abaixo do limite na semana ${firstWeekBelow.week_number}`,
+        message: `Warning: balance below limit in week ${firstWeekBelow.week_number}`,
         icon: AlertTriangle
       });
     } else {
       alerts.push({
         type: 'success',
-        message: "Boa notícia: saldo estável nas próximas 12 semanas",
+        message: `Good news: stable balance for the next ${forecastWeeks} weeks`,
         icon: CheckCircle2
       });
     }
@@ -388,7 +390,7 @@ export default function App() {
       const diff = Math.ceil((parseISO(largeExpense.date).getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
       alerts.push({
         type: 'warning',
-        message: `Despesa grande (${formatCurrency(largeExpense.amount)}) a aproximar-se em ${diff} dias`,
+        message: `Large expense (${formatCurrency(largeExpense.amount)}) approaching in ${diff} days`,
         icon: Bell
       });
     }
@@ -399,7 +401,7 @@ export default function App() {
       if (simBelow) {
         alerts.push({
           type: 'warning',
-          message: "Simulação aumenta o risco financeiro",
+          message: "Simulation increases financial risk",
           icon: TrendingDown
         });
       }
@@ -408,11 +410,16 @@ export default function App() {
     return alerts;
   }, [forecast, events, simulation, settings]);
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('pt-BR', {
+  const formatCurrency = (value: number, currencyCode?: string) => {
+    return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: CURRENCY,
+      currency: currencyCode || settings.currency,
     }).format(value);
+  };
+
+  const formatRemittance = (value: number) => {
+    const converted = value * settings.exchange_rate;
+    return formatCurrency(converted, settings.remittance_currency);
   };
 
   const handleAddItem = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -484,7 +491,7 @@ export default function App() {
     }
   };
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Carregando...</div>;
+  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
 
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900 pb-24">
@@ -496,8 +503,8 @@ export default function App() {
               <Wallet size={24} />
             </div>
             <div>
-              <h1 className="text-lg font-bold leading-none">Fluxo Futuro</h1>
-              <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Previsão de Saldo</p>
+              <h1 className="text-lg font-bold leading-none">Future Flow</h1>
+              <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">Balance Forecast</p>
             </div>
           </div>
           <button className="p-2 text-zinc-400 hover:text-zinc-900 transition-colors relative">
@@ -511,19 +518,19 @@ export default function App() {
 
       <main className="max-w-md mx-auto px-6 py-6 space-y-6">
         {activeTab === 'forecast' && (
-          <>
+          <div className="space-y-6 pb-32 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Simulation Active Banner */}
             {simulation.isActive && (
               <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 flex items-center justify-between animate-in fade-in slide-in-from-top-2 duration-300">
                 <div className="flex items-center gap-2">
                   <TrendingUp size={16} className="text-amber-600" />
-                  <span className="text-xs font-bold text-amber-900">Modo Simulação Ativo</span>
+                  <span className="text-xs font-bold text-amber-900">Simulation Mode Active</span>
                 </div>
                 <button 
                   onClick={() => setSimulation(s => ({ ...s, isActive: false }))}
                   className="text-[10px] font-bold text-amber-600 uppercase hover:text-amber-700"
                 >
-                  Desativar
+                  Deactivate
                 </button>
               </div>
             )}
@@ -532,7 +539,7 @@ export default function App() {
             <div className="bg-zinc-900 rounded-3xl p-6 text-white shadow-xl shadow-zinc-200 overflow-hidden relative">
               <div className="relative z-10">
                 <div className="flex items-center justify-between">
-                  <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider">Saldo Atual</p>
+                  <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider">Current Balance</p>
                   <button 
                     onClick={() => {
                       setSettingsModalType('threshold');
@@ -541,7 +548,7 @@ export default function App() {
                     className="bg-white/10 px-2 py-1 rounded-lg flex items-center gap-1.5 hover:bg-white/20 transition-colors"
                   >
                     <Target size={12} className="text-zinc-400" />
-                    <span className="text-[10px] font-bold uppercase text-zinc-300">Meta: {formatCurrency(settings.safety_threshold)}</span>
+                    <span className="text-[10px] font-bold uppercase text-zinc-300">Goal: {formatCurrency(settings.safety_threshold)}</span>
                   </button>
                 </div>
                 <h2 
@@ -562,21 +569,21 @@ export default function App() {
                     }}
                     className="bg-white/5 rounded-2xl p-3 border border-white/5 cursor-pointer hover:bg-white/10 transition-colors"
                   >
-                    <p className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Gasto Semanal</p>
+                    <p className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Weekly Spending</p>
                     <p className="text-sm font-bold">{formatCurrency(settings.weekly_spending_estimate)}</p>
                   </div>
                   <div className="bg-white/5 rounded-2xl p-3 border border-white/5">
-                    <p className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Status 12 Sem.</p>
+                    <p className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Status {forecastWeeks} Wks.</p>
                     <div className="flex items-center gap-1.5">
                       {forecast.some(w => w.is_below_threshold) ? (
                         <>
                           <AlertTriangle size={14} className="text-rose-500" />
-                          <span className="text-sm font-bold text-rose-500">Risco</span>
+                          <span className="text-sm font-bold text-rose-500">Risk</span>
                         </>
                       ) : (
                         <>
                           <CheckCircle2 size={14} className="text-emerald-500" />
-                          <span className="text-sm font-bold text-emerald-500">Seguro</span>
+                          <span className="text-sm font-bold text-emerald-500">Safe</span>
                         </>
                       )}
                     </div>
@@ -613,16 +620,43 @@ export default function App() {
               ))}
             </div>
 
+            {/* Currency Converter / Remittance Card */}
+            <div className="bg-white rounded-3xl p-6 border border-zinc-200 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                  <ArrowRight size={14} /> Currency Converter
+                </h3>
+                <span className="text-[10px] font-bold text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-full uppercase">
+                  Remittance Estimate
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">In {settings.remittance_currency}</p>
+                  <p className="text-2xl font-black text-zinc-900">{formatRemittance(settings.current_balance)}</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Rate</p>
+                  <p className="text-sm font-bold text-zinc-600">1 {settings.currency} = {settings.exchange_rate} {settings.remittance_currency}</p>
+                </div>
+              </div>
+              <div className="pt-3 border-t border-zinc-100">
+                <p className="text-[10px] text-zinc-500 font-medium italic">
+                  * Based on your custom exchange rate in settings.
+                </p>
+              </div>
+            </div>
+
             {/* AI Advisor Entry Card */}
             <div className="bg-gradient-to-br from-indigo-600 to-violet-700 rounded-3xl p-6 text-white shadow-xl shadow-indigo-100 overflow-hidden relative group cursor-pointer" onClick={() => { setIsAIPanelOpen(true); if (!aiAnalysis) handleRunAIAnalysis(); }}>
               <div className="relative z-10 flex items-center justify-between">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <Sparkles size={16} className="text-indigo-200" />
-                    <h3 className="text-xs font-bold text-indigo-100 uppercase tracking-widest">Assistente AI</h3>
+                    <h3 className="text-xs font-bold text-indigo-100 uppercase tracking-widest">AI Assistant</h3>
                   </div>
                   <h2 className="text-xl font-black tracking-tight">AI Insights</h2>
-                  <p className="text-[10px] text-indigo-200 font-medium max-w-[180px]">Receba recomendações inteligentes baseadas nos seus dados.</p>
+                  <p className="text-[10px] text-indigo-200 font-medium max-w-[180px]">Get smart recommendations based on your data.</p>
                 </div>
                 <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-md group-hover:scale-110 transition-transform">
                   <Brain size={32} className="text-white" />
@@ -633,13 +667,13 @@ export default function App() {
                   onClick={(e) => { e.stopPropagation(); setIsAIPanelOpen(true); if (!aiAnalysis) handleRunAIAnalysis(); }}
                   className="bg-white text-indigo-600 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider shadow-lg shadow-indigo-900/20 hover:bg-indigo-50 transition-colors"
                 >
-                  Analisar
+                  Analyze
                 </button>
                 <button 
                   onClick={(e) => { e.stopPropagation(); setIsAIPanelOpen(true); }}
                   className="bg-indigo-500/30 text-white border border-white/20 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider hover:bg-indigo-500/40 transition-colors flex items-center gap-1.5"
                 >
-                  <MessageSquare size={12} /> Perguntar
+                  <MessageSquare size={12} /> Ask AI
                 </button>
               </div>
               <div className="absolute -right-6 -bottom-6 w-32 h-32 bg-white/10 rounded-full blur-2xl group-hover:bg-white/20 transition-colors"></div>
@@ -649,34 +683,34 @@ export default function App() {
             <div className="bg-white rounded-3xl p-6 border border-zinc-200 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
-                  <PieChart size={14} /> Resumo do Mês
+                  <PieChart size={14} /> Monthly Summary
                 </h3>
                 <span className="text-[10px] font-bold text-zinc-400 bg-zinc-100 px-2 py-0.5 rounded-full uppercase">
-                  {format(new Date(), 'MMMM', { locale: ptBR })}
+                  {format(new Date(), 'MMMM', { locale: enUS })}
                 </span>
               </div>
               
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-zinc-500 font-medium">Receitas do mês</span>
+                  <span className="text-zinc-500 font-medium">Monthly income</span>
                   <span className="font-bold text-emerald-600">+{formatCurrency(monthlySummary.totalIncome)}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-zinc-500 font-medium">Despesas fixas</span>
+                  <span className="text-zinc-500 font-medium">Fixed expenses</span>
                   <span className="font-bold text-rose-600">-{formatCurrency(monthlySummary.totalFixed)}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm">
-                  <span className="text-zinc-500 font-medium">Variáveis estimadas</span>
+                  <span className="text-zinc-500 font-medium">Estimated variable</span>
                   <span className="font-bold text-zinc-900">-{formatCurrency(monthlySummary.monthlyVariable)}</span>
                 </div>
                 {monthlySummary.extraEvents > 0 && (
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-zinc-500 font-medium">Eventos extraordinários</span>
+                    <span className="text-zinc-500 font-medium">Extraordinary events</span>
                     <span className="font-bold text-amber-600">-{formatCurrency(monthlySummary.extraEvents)}</span>
                   </div>
                 )}
                 <div className="pt-3 border-t border-zinc-100 flex justify-between items-center">
-                  <span className="text-xs font-bold uppercase text-zinc-900">Saldo previsto no fim do mês</span>
+                  <span className="text-xs font-bold uppercase text-zinc-900">Projected end of month balance</span>
                   <span className={cn(
                     "text-lg font-black",
                     monthlySummary.projectedRemaining < 0 ? "text-rose-600" : "text-zinc-900"
@@ -688,74 +722,151 @@ export default function App() {
             </div>
 
             {/* Chart */}
-            <div className="bg-white rounded-3xl p-6 border border-zinc-200 shadow-sm h-80">
-              <div className="flex items-center justify-between mb-6">
-                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Projeção 12 Semanas</h3>
-                <button 
-                  onClick={() => setIsSimPanelOpen(true)}
-                  className={cn(
-                    "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold uppercase transition-all shadow-sm",
-                    simulation.isActive 
-                      ? "bg-amber-500 text-white border border-amber-600" 
-                      : "bg-zinc-900 text-white hover:bg-zinc-800"
-                  )}
-                >
-                  <TrendingUp size={14} />
-                  {simulation.isActive ? 'Simulação Ativa' : 'Simular'}
-                </button>
+            <div className="bg-white rounded-3xl p-6 border border-zinc-200 shadow-sm h-[400px]">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Projection {forecastWeeks} Weeks</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <select 
+                    onChange={(e) => {
+                      const month = parseInt(e.target.value);
+                      if (isNaN(month)) return;
+                      const today = new Date();
+                      const target = new Date(today.getFullYear(), month, 1);
+                      if (target < today) target.setFullYear(today.getFullYear() + 1);
+                      
+                      // Find the first week in the forecast that starts in this month
+                      const targetWeek = forecast.find(w => {
+                        const wStart = parseISO(w.start_date);
+                        return wStart.getMonth() === target.getMonth() && wStart.getFullYear() === target.getFullYear();
+                      });
+                      
+                      if (targetWeek) {
+                        if (targetWeek.week_number > forecastWeeks) {
+                          setForecastWeeks(52);
+                        }
+                        
+                        setTimeout(() => {
+                          const element = document.getElementById(`week-${targetWeek.week_number}`);
+                          if (element) {
+                            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }
+                        }, 100);
+                      }
+                    }}
+                    className="bg-zinc-100 border-none rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest outline-none focus:ring-2 focus:ring-zinc-900 transition-all shadow-sm"
+                  >
+                    <option value="">Month...</option>
+                    {Array.from({ length: 12 }).map((_, i) => {
+                      const d = new Date();
+                      d.setMonth(d.getMonth() + i);
+                      return (
+                        <option key={i} value={d.getMonth()}>
+                          {format(d, 'MMM yy', { locale: enUS })}
+                        </option>
+                      );
+                    })}
+                  </select>
+                  <div className="flex items-center gap-1 bg-zinc-100 p-1 rounded-xl shadow-sm">
+                    {[12, 24, 52].map(weeks => (
+                      <button
+                        key={weeks}
+                        onClick={() => setForecastWeeks(weeks)}
+                        className={cn(
+                          "px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all",
+                          forecastWeeks === weeks 
+                            ? "bg-white text-zinc-900 shadow-sm" 
+                            : "text-zinc-400 hover:text-zinc-600"
+                        )}
+                      >
+                        {weeks === 52 ? '1 Year' : `${weeks}W`}
+                      </button>
+                    ))}
+                  </div>
+                  <button 
+                    onClick={() => setIsSimPanelOpen(true)}
+                    className={cn(
+                      "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold uppercase transition-all shadow-sm",
+                      simulation.isActive 
+                        ? "bg-amber-500 text-white border border-amber-600" 
+                        : "bg-zinc-900 text-white hover:bg-zinc-800"
+                    )}
+                  >
+                    <TrendingUp size={14} />
+                    {simulation.isActive ? 'Sim' : 'Simulate'}
+                  </button>
+                </div>
               </div>
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={forecast}>
-                  <defs>
-                    <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#18181b" stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor="#18181b" stopOpacity={0}/>
-                    </linearGradient>
-                    <linearGradient id="colorSim" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.1}/>
-                      <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
-                  <XAxis dataKey="start_date" axisLine={false} tickLine={false} tick={{fontSize: 10, fill: '#a1a1aa'}} />
-                  <YAxis hide />
-                  <Tooltip 
-                    contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' }}
-                    formatter={(val: number, name: string) => [
-                      formatCurrency(val), 
-                      name === 'projected_balance' ? 'Real' : 'Simulado'
-                    ]}
-                  />
-                  <ReferenceLine y={settings.safety_threshold} stroke="#f43f5e" strokeDasharray="3 3" label={{ position: 'right', value: 'Limite', fill: '#f43f5e', fontSize: 8, fontWeight: 'bold' }} />
-                  <Area 
-                    type="monotone" 
-                    dataKey="projected_balance" 
-                    stroke="#18181b" 
-                    strokeWidth={3} 
-                    fillOpacity={1} 
-                    fill="url(#colorBalance)" 
-                    name="projected_balance"
-                  />
-                  {simulation.isActive && (
+              <div className="h-[280px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={forecast} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#18181b" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="#18181b" stopOpacity={0}/>
+                      </linearGradient>
+                      <linearGradient id="colorSim" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#f59e0b" stopOpacity={0.1}/>
+                        <stop offset="95%" stopColor="#f59e0b" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f4f4f5" />
+                    <XAxis 
+                      dataKey="start_date" 
+                      axisLine={false} 
+                      tickLine={false} 
+                      tick={{fontSize: 10, fill: '#a1a1aa'}} 
+                      tickFormatter={(val) => format(parseISO(val), 'dd/MM')}
+                    />
+                    <YAxis hide domain={['auto', 'auto']} padding={{ top: 20, bottom: 20 }} />
+                    <Tooltip 
+                      contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)' }}
+                      formatter={(val: number, name: string) => [
+                        formatCurrency(val), 
+                        name === 'projected_balance' ? 'Real' : 'Simulated'
+                      ]}
+                    />
+                    <ReferenceLine 
+                      y={settings.safety_threshold} 
+                      stroke="#f43f5e" 
+                      strokeDasharray="3 3" 
+                      label={{ 
+                        position: 'top', 
+                        value: 'Limit', 
+                        fill: '#f43f5e', 
+                        fontSize: 10, 
+                        fontWeight: 'bold' 
+                      }} 
+                    />
                     <Area 
                       type="monotone" 
-                      dataKey="simulated_balance" 
-                      stroke="#f59e0b" 
+                      dataKey="projected_balance" 
+                      stroke="#18181b" 
                       strokeWidth={3} 
-                      strokeDasharray="6 6"
                       fillOpacity={1} 
-                      fill="url(#colorSim)" 
-                      name="simulated_balance"
+                      fill="url(#colorBalance)" 
+                      name="projected_balance"
                     />
-                  )}
-                </AreaChart>
-              </ResponsiveContainer>
+                    {simulation.isActive && (
+                      <Area 
+                        type="monotone" 
+                        dataKey="simulated_balance" 
+                        stroke="#f59e0b" 
+                        strokeWidth={3} 
+                        strokeDasharray="6 6"
+                        fillOpacity={1} 
+                        fill="url(#colorSim)" 
+                        name="simulated_balance"
+                      />
+                    )}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
             </div>
 
             {/* Forecast List */}
             <div className="space-y-4">
               <div className="flex items-center justify-between px-2">
-                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Linha do Tempo</h3>
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Timeline</h3>
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1">
                     <div className="w-2 h-2 bg-zinc-900 rounded-full"></div>
@@ -764,7 +875,7 @@ export default function App() {
                   {simulation.isActive && (
                     <div className="flex items-center gap-1">
                       <div className="w-2 h-2 bg-amber-500 rounded-full"></div>
-                      <span className="text-[8px] font-bold text-zinc-400 uppercase">Simulado</span>
+                      <span className="text-[8px] font-bold text-zinc-400 uppercase">Simulated</span>
                     </div>
                   )}
                 </div>
@@ -773,6 +884,7 @@ export default function App() {
                 {forecast.map((week) => (
                   <div 
                     key={week.week_number}
+                    id={`week-${week.week_number}`}
                     className={cn(
                       "bg-white rounded-2xl p-5 border transition-all flex items-center justify-between group hover:border-zinc-300",
                       (simulation.isActive ? week.is_sim_below_threshold : week.is_below_threshold) 
@@ -787,22 +899,24 @@ export default function App() {
                           ? "bg-rose-100 text-rose-600" 
                           : "bg-zinc-100 text-zinc-500 group-hover:bg-zinc-200"
                       )}>
-                        <span className="uppercase opacity-50 text-[8px]">Sem</span>
+                        <span className="uppercase opacity-50 text-[8px]">Week</span>
                         <span className="text-lg leading-none">{week.week_number}</span>
                       </div>
                       <div>
-                        <p className="text-xs font-bold text-zinc-900">{week.start_date} - {week.end_date}</p>
+                        <p className="text-xs font-bold text-zinc-900">
+                          {format(parseISO(week.start_date), 'dd/MM')} - {format(parseISO(week.end_date), 'dd/MM')}
+                        </p>
                         <div className="flex flex-wrap gap-1.5 mt-2">
                           {week.incomes.length > 0 && (
                             <div className="flex items-center gap-1 bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-lg border border-emerald-100">
                               <ArrowUpRight size={10} />
-                              <span className="text-[8px] font-bold uppercase">Receita</span>
+                              <span className="text-[8px] font-bold uppercase">Income</span>
                             </div>
                           )}
                           {week.events.length > 0 && (
                             <div className="flex items-center gap-1 bg-amber-50 text-amber-700 px-2 py-0.5 rounded-lg border border-amber-100">
                               <Calendar size={10} />
-                              <span className="text-[8px] font-bold uppercase">Evento</span>
+                              <span className="text-[8px] font-bold uppercase">Event</span>
                             </div>
                           )}
                         </div>
@@ -827,12 +941,12 @@ export default function App() {
                           onClick={() => setSelectedWeek(week)}
                           className="mt-1 text-[10px] font-bold text-zinc-400 uppercase hover:text-zinc-600 flex items-center gap-1 transition-colors"
                         >
-                          <Info size={12} /> Ver explicação
+                          <Info size={12} /> View details
                         </button>
                       </div>
                       {(simulation.isActive ? week.is_sim_below_threshold : week.is_below_threshold) && (
                         <p className="text-[10px] text-rose-500 font-bold flex items-center justify-end gap-1 mt-1.5">
-                          <AlertTriangle size={12} /> Risco de Saldo
+                          <AlertTriangle size={12} /> Balance Risk
                         </p>
                       )}
                     </div>
@@ -840,7 +954,7 @@ export default function App() {
                 ))}
               </div>
             </div>
-          </>
+          </div>
         )}
 
         {activeTab === 'setup' && (
@@ -849,16 +963,55 @@ export default function App() {
             <section className="space-y-4">
               <div className="flex items-center gap-2 px-2">
                 <SettingsIcon size={16} className="text-zinc-400" />
-                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Configuração Geral</h3>
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">General Configuration</h3>
               </div>
               <div className="bg-white rounded-3xl p-6 border border-zinc-200 space-y-6 shadow-sm">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Currency</label>
+                    <select 
+                      value={settings.currency}
+                      onChange={(e) => handleSaveSettings({...settings, currency: e.target.value})}
+                      className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
+                    >
+                      <option value="CHF">CHF</option>
+                      <option value="EUR">EUR</option>
+                      <option value="USD">USD</option>
+                      <option value="GBP">GBP</option>
+                      <option value="BRL">BRL</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Remittance Currency</label>
+                    <select 
+                      value={settings.remittance_currency}
+                      onChange={(e) => handleSaveSettings({...settings, remittance_currency: e.target.value})}
+                      className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
+                    >
+                      <option value="EUR">EUR</option>
+                      <option value="BRL">BRL</option>
+                      <option value="USD">USD</option>
+                      <option value="GBP">GBP</option>
+                    </select>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase">Exchange Rate (1 {settings.currency} = ? {settings.remittance_currency})</label>
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    value={settings.exchange_rate}
+                    onChange={(e) => handleSaveSettings({...settings, exchange_rate: Number(e.target.value)})}
+                    className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
+                  />
+                </div>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Saldo Bancário Atual</label>
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Current Bank Balance</label>
                     <Wallet size={14} className="text-zinc-300" />
                   </div>
                   <div className="relative">
-                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-zinc-400">{CURRENCY}</span>
+                    <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-zinc-400">{settings.currency}</span>
                     <input 
                       type="number" 
                       value={settings.current_balance}
@@ -869,7 +1022,7 @@ export default function App() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Gasto Semanal</label>
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Weekly Spending</label>
                     <input 
                       type="number" 
                       value={settings.weekly_spending_estimate}
@@ -878,7 +1031,7 @@ export default function App() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Limite Segurança</label>
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Safety Limit</label>
                     <input 
                       type="number" 
                       value={settings.safety_threshold}
@@ -893,8 +1046,8 @@ export default function App() {
                       <Users size={18} className="text-zinc-400" />
                     </div>
                     <div>
-                      <span className="text-sm font-bold block">Modo Casal</span>
-                      <span className="text-[10px] text-zinc-400 uppercase font-medium">Gestão Partilhada</span>
+                      <span className="text-sm font-bold block">Couple Mode</span>
+                      <span className="text-[10px] text-zinc-400 uppercase font-medium">Shared Management</span>
                     </div>
                   </div>
                   <button 
@@ -918,13 +1071,13 @@ export default function App() {
               <div className="flex items-center justify-between px-2">
                 <div className="flex items-center gap-2">
                   <ArrowUpRight size={16} className="text-emerald-500" />
-                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Receitas Mensais</h3>
+                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Monthly Incomes</h3>
                 </div>
                 <button 
                   onClick={() => { setModalType('income'); setEditingItem(null); setIsModalOpen(true); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-xl text-[10px] font-bold uppercase shadow-sm hover:bg-emerald-700 transition-colors"
                 >
-                  <Plus size={14} /> Adicionar
+                  <Plus size={14} /> Add
                 </button>
               </div>
               <div className="space-y-2">
@@ -937,7 +1090,7 @@ export default function App() {
                       <div>
                         <p className="text-sm font-bold">{inc.name}</p>
                         <div className="flex items-center gap-2 mt-0.5">
-                          <span className="text-[10px] text-zinc-400 font-medium">Dia {inc.day_of_month}</span>
+                          <span className="text-[10px] text-zinc-400 font-medium">Day {inc.day_of_month}</span>
                           <span className="w-1 h-1 bg-zinc-200 rounded-full"></span>
                           <span className="text-[10px] bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-md font-bold uppercase">{inc.owner}</span>
                         </div>
@@ -958,7 +1111,7 @@ export default function App() {
                 ))}
                 {incomes.length === 0 && (
                   <div className="bg-zinc-50 border-2 border-dashed border-zinc-200 rounded-2xl p-8 text-center">
-                    <p className="text-xs font-bold text-zinc-400 uppercase">Nenhuma receita registada</p>
+                    <p className="text-xs font-bold text-zinc-400 uppercase">No income registered</p>
                   </div>
                 )}
               </div>
@@ -969,13 +1122,13 @@ export default function App() {
               <div className="flex items-center justify-between px-2">
                 <div className="flex items-center gap-2">
                   <ArrowDownRight size={16} className="text-rose-500" />
-                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Despesas Fixas</h3>
+                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Fixed Expenses</h3>
                 </div>
                 <button 
                   onClick={() => { setModalType('expense'); setEditingItem(null); setIsModalOpen(true); }}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 text-white rounded-xl text-[10px] font-bold uppercase shadow-sm hover:bg-rose-700 transition-colors"
                 >
-                  <Plus size={14} /> Adicionar
+                  <Plus size={14} /> Add
                 </button>
               </div>
               <div className="space-y-2">
@@ -987,7 +1140,7 @@ export default function App() {
                       </div>
                       <div>
                         <p className="text-sm font-bold">{exp.name}</p>
-                        <p className="text-[10px] text-zinc-400 font-medium mt-0.5">Dia {exp.day_of_month}</p>
+                        <p className="text-[10px] text-zinc-400 font-medium mt-0.5">Day {exp.day_of_month}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -1005,7 +1158,7 @@ export default function App() {
                 ))}
                 {fixedExpenses.length === 0 && (
                   <div className="bg-zinc-50 border-2 border-dashed border-zinc-200 rounded-2xl p-8 text-center">
-                    <p className="text-xs font-bold text-zinc-400 uppercase">Nenhuma despesa fixa registada</p>
+                    <p className="text-xs font-bold text-zinc-400 uppercase">No fixed expense registered</p>
                   </div>
                 )}
               </div>
@@ -1018,13 +1171,13 @@ export default function App() {
             <div className="flex items-center justify-between px-2">
               <div className="flex items-center gap-2">
                 <Calendar size={16} className="text-amber-500" />
-                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Eventos Futuros</h3>
+                <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Future Events</h3>
               </div>
               <button 
                 onClick={() => { setModalType('event'); setEditingItem(null); setIsModalOpen(true); }}
                 className="bg-zinc-900 text-white px-4 py-2 rounded-xl text-[10px] font-bold uppercase flex items-center gap-2 shadow-sm hover:bg-zinc-800 transition-colors"
               >
-                <Plus size={14} /> Novo Evento
+                <Plus size={14} /> New Event
               </button>
             </div>
 
@@ -1038,7 +1191,7 @@ export default function App() {
                     <div>
                       <p className="text-sm font-bold">{evt.description}</p>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-[10px] text-zinc-400 font-medium">{format(parseISO(evt.date), 'dd MMM yyyy', { locale: ptBR })}</span>
+                        <span className="text-[10px] text-zinc-400 font-medium">{format(parseISO(evt.date), 'dd MMM yyyy', { locale: enUS })}</span>
                       </div>
                     </div>
                   </div>
@@ -1060,8 +1213,8 @@ export default function App() {
                   <div className="w-20 h-20 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-4 text-zinc-200">
                     <Calendar size={40} />
                   </div>
-                  <p className="text-sm text-zinc-400 font-bold uppercase tracking-wider">Nenhum evento planejado</p>
-                  <p className="text-[10px] text-zinc-400 mt-1">Adicione despesas pontuais como seguros ou férias</p>
+                  <p className="text-sm text-zinc-400 font-bold uppercase tracking-wider">No events planned</p>
+                  <p className="text-[10px] text-zinc-400 mt-1">Add one-off expenses like insurance or vacations</p>
                 </div>
               )}
             </div>
@@ -1072,8 +1225,8 @@ export default function App() {
           <div className="space-y-6 animate-in slide-in-from-right duration-500">
             <div className="flex items-center justify-between px-1">
               <div className="space-y-1">
-                <h2 className="text-2xl font-black tracking-tight text-zinc-900">Metas Financeiras</h2>
-                <p className="text-[10px] text-zinc-400 font-black uppercase tracking-widest">Planeie o seu futuro</p>
+                <h2 className="text-2xl font-black tracking-tight text-zinc-900">Financial Goals</h2>
+                <p className="text-[10px] text-zinc-400 font-black uppercase tracking-widest">Plan your future</p>
               </div>
               <button 
                 onClick={() => { setModalType('goal'); setEditingItem(null); setIsModalOpen(true); }}
@@ -1090,6 +1243,16 @@ export default function App() {
                 const totalWeeks = Math.max(1, Math.ceil((targetDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24 * 7)));
                 const neededPerWeek = goal.target_amount / totalWeeks;
                 
+                // Find projected balance at target date
+                const targetWeek = forecast.find(w => {
+                  const wStart = parseISO(w.start_date);
+                  const wEnd = parseISO(w.end_date);
+                  return targetDate >= wStart && targetDate <= wEnd;
+                });
+
+                const projectedAtTarget = targetWeek ? targetWeek.projected_balance : null;
+                const isOnTrack = projectedAtTarget !== null ? projectedAtTarget >= goal.target_amount : null;
+                
                 return (
                   <div key={goal.id} className="bg-white rounded-3xl p-6 border border-zinc-100 shadow-sm relative group overflow-hidden">
                     <div className="flex items-start justify-between relative z-10">
@@ -1104,27 +1267,53 @@ export default function App() {
                           <div>
                             <h3 className="text-lg font-black text-zinc-900 leading-tight">{goal.name}</h3>
                             <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider">
-                              Até {format(targetDate, 'MMMM yyyy', { locale: ptBR })}
+                              By {format(targetDate, 'MMMM yyyy', { locale: enUS })}
                             </p>
                           </div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1">
-                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Objetivo</p>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Goal</p>
                             <p className="text-xl font-black text-zinc-900">{formatCurrency(goal.target_amount)}</p>
                           </div>
                           <div className="space-y-1">
-                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Poup. Semanal</p>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Weekly Savings</p>
                             <p className="text-xl font-black text-indigo-600">~{formatCurrency(neededPerWeek)}</p>
                           </div>
                         </div>
 
-                        {!goal.is_completed && (
+                        {projectedAtTarget !== null && (
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center">
+                              <p className="text-[10px] text-zinc-400 font-bold uppercase tracking-widest">Projected Balance at Date</p>
+                              <span className={cn(
+                                "text-[10px] font-black uppercase px-2 py-0.5 rounded-full",
+                                isOnTrack ? "bg-emerald-100 text-emerald-600" : "bg-rose-100 text-rose-600"
+                              )}>
+                                {isOnTrack ? 'On Track' : 'Below Target'}
+                              </span>
+                            </div>
+                            <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
+                              <div 
+                                className={cn(
+                                  "h-full transition-all duration-1000",
+                                  isOnTrack ? "bg-emerald-500" : "bg-rose-500"
+                                )}
+                                style={{ width: `${Math.min(100, (projectedAtTarget / goal.target_amount) * 100)}%` }}
+                              ></div>
+                            </div>
+                            <p className="text-[10px] font-bold text-zinc-500">
+                              Projection: <span className="text-zinc-900">{formatCurrency(projectedAtTarget)}</span>
+                            </p>
+                          </div>
+                        )}
+
+                        {!goal.is_completed && projectedAtTarget === null && (
                           <div className="bg-indigo-50 rounded-2xl p-4 border border-indigo-100 flex items-center gap-3">
                             <Info size={16} className="text-indigo-500 shrink-0" />
                             <p className="text-[10px] font-bold text-indigo-700 leading-relaxed">
-                              Para atingir esta meta em {totalWeeks} semanas, precisa de poupar cerca de {formatCurrency(neededPerWeek)} por semana.
+                              This goal is beyond the current forecast period ({forecastWeeks} weeks). To reach {formatCurrency(goal.target_amount)} in {totalWeeks} weeks, you need to save about {formatCurrency(neededPerWeek)} per week.
                             </p>
                           </div>
                         )}
@@ -1148,7 +1337,7 @@ export default function App() {
 
                     {goal.is_completed && (
                       <div className="absolute top-4 right-4 bg-emerald-100 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5">
-                        <CheckCircle2 size={12} /> Concluída
+                        <CheckCircle2 size={12} /> Completed
                       </div>
                     )}
                     
@@ -1162,15 +1351,15 @@ export default function App() {
                   <div className="w-24 h-24 bg-zinc-50 rounded-full flex items-center justify-center mx-auto mb-6 text-zinc-200">
                     <Target size={48} />
                   </div>
-                  <h3 className="text-lg font-black text-zinc-900 mb-2">Defina as suas Metas</h3>
+                  <h3 className="text-lg font-black text-zinc-900 mb-2">Define your Goals</h3>
                   <p className="text-xs text-zinc-400 font-medium max-w-[240px] mx-auto leading-relaxed">
-                    Quer comprar um carro? Poupar para as férias? Defina um valor e uma data e o assistente ajudará a chegar lá.
+                    Want to buy a car? Save for vacations? Set a value and a date and the assistant will help you get there.
                   </p>
                   <button 
                     onClick={() => { setModalType('goal'); setEditingItem(null); setIsModalOpen(true); }}
                     className="mt-8 bg-zinc-900 text-white px-8 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-zinc-200 hover:bg-zinc-800 transition-all active:scale-95"
                   >
-                    Criar Primeira Meta
+                    Create First Goal
                   </button>
                 </div>
               )}
@@ -1190,7 +1379,7 @@ export default function App() {
             )}
           >
             <LayoutDashboard size={24} />
-            <span className="text-[10px] font-bold uppercase">Previsão</span>
+            <span className="text-[10px] font-bold uppercase">Forecast</span>
           </button>
           <button 
             onClick={() => setActiveTab('events')}
@@ -1200,7 +1389,7 @@ export default function App() {
             )}
           >
             <Calendar size={24} />
-            <span className="text-[10px] font-bold uppercase">Eventos</span>
+            <span className="text-[10px] font-bold uppercase">Events</span>
           </button>
           <button 
             onClick={() => setActiveTab('goals')}
@@ -1210,7 +1399,7 @@ export default function App() {
             )}
           >
             <Target size={24} />
-            <span className="text-[10px] font-bold uppercase">Metas</span>
+            <span className="text-[10px] font-bold uppercase">Goals</span>
           </button>
           <button 
             onClick={() => setActiveTab('setup')}
@@ -1220,7 +1409,7 @@ export default function App() {
             )}
           >
             <SettingsIcon size={24} />
-            <span className="text-[10px] font-bold uppercase">Ajustes</span>
+            <span className="text-[10px] font-bold uppercase">Settings</span>
           </button>
         </div>
       </nav>
@@ -1243,8 +1432,8 @@ export default function App() {
                   <TrendingUp size={24} />
                 </div>
                 <div>
-                  <h2 className="text-xl font-black text-amber-900 tracking-tight">Modo Simulação</h2>
-                  <p className="text-[10px] text-amber-600 uppercase font-bold tracking-widest">Teste cenários hipotéticos</p>
+                  <h2 className="text-xl font-black text-amber-900 tracking-tight">Simulation Mode</h2>
+                  <p className="text-[10px] text-amber-600 uppercase font-bold tracking-widest">Test hypothetical scenarios</p>
                 </div>
               </div>
               <button onClick={() => setIsSimPanelOpen(false)} className="p-2 text-amber-400 hover:bg-amber-100 rounded-xl transition-colors">
@@ -1263,8 +1452,8 @@ export default function App() {
                     <TrendingUp size={20} />
                   </div>
                   <div>
-                    <p className="text-sm font-black text-amber-900">Ativar Simulação</p>
-                    <p className="text-[10px] text-amber-600 uppercase font-bold">Ver impacto no gráfico</p>
+                    <p className="text-sm font-black text-amber-900">Activate Simulation</p>
+                    <p className="text-[10px] text-amber-600 uppercase font-bold">See impact on chart</p>
                   </div>
                 </div>
                 <button 
@@ -1285,7 +1474,7 @@ export default function App() {
               <div className="space-y-4">
                 <div className="flex items-center gap-2 px-1">
                   <PieChart size={14} className="text-zinc-400" />
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Alterar Gasto Semanal</label>
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Change Weekly Spending</label>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
                   {[0, 50, 100, 200, 500].map(delta => (
@@ -1299,14 +1488,14 @@ export default function App() {
                           : "bg-zinc-50 border-zinc-100 text-zinc-500 hover:border-zinc-200 hover:bg-white"
                       )}
                     >
-                      +{delta} {CURRENCY}
+                      +{delta} {settings.currency}
                     </button>
                   ))}
                   <button
                     onClick={() => setSimulation({ isActive: false, weeklySpendingDelta: 0, oneOffExpenses: [], incomeChanges: [] })}
                     className="py-4 rounded-2xl text-[10px] font-black bg-rose-50 border border-rose-100 text-rose-600 flex items-center justify-center gap-1.5 uppercase tracking-wider hover:bg-rose-100 transition-colors"
                   >
-                    <RotateCcw size={14} /> Limpar
+                    <RotateCcw size={14} /> Clear
                   </button>
                 </div>
               </div>
@@ -1315,7 +1504,7 @@ export default function App() {
               <div className="space-y-4">
                 <div className="flex items-center gap-2 px-1">
                   <ArrowDownRight size={14} className="text-zinc-400" />
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Simular Compra Grande</label>
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Simulate Large Purchase</label>
                 </div>
                 <div className="space-y-3">
                   <form 
@@ -1335,13 +1524,13 @@ export default function App() {
                     }}
                     className="bg-zinc-50 p-5 rounded-[24px] border border-zinc-100 space-y-4 shadow-inner"
                   >
-                    <input name="description" placeholder="Ex: Laptop, Reparação Carro" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                    <input name="description" placeholder="Ex: Laptop, Car Repair" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
                     <div className="grid grid-cols-2 gap-3">
-                      <input name="amount" type="number" placeholder="Valor" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
+                      <input name="amount" type="number" placeholder="Value" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
                       <input name="date" type="date" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400 transition-all" />
                     </div>
                     <button type="submit" className="w-full bg-amber-500 text-white py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-amber-200 hover:bg-amber-600 transition-all active:scale-[0.98]">
-                      Adicionar à Simulação
+                      Add to Simulation
                     </button>
                   </form>
                   
@@ -1352,7 +1541,7 @@ export default function App() {
                           <div className="w-2 h-2 bg-amber-400 rounded-full animate-pulse"></div>
                           <div>
                             <p className="text-sm font-black text-zinc-900">{exp.description}</p>
-                            <p className="text-[10px] text-zinc-400 font-bold uppercase">{format(parseISO(exp.date), 'dd MMM', { locale: ptBR })}</p>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase">{format(parseISO(exp.date), 'dd MMM', { locale: enUS })}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-4">
@@ -1377,7 +1566,7 @@ export default function App() {
               <div className="space-y-4">
                 <div className="flex items-center gap-2 px-1">
                   <ArrowUpRight size={14} className="text-zinc-400" />
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Simular Rendimento Extra</label>
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Simulate Extra Income</label>
                 </div>
                 <div className="space-y-3">
                   <form 
@@ -1397,13 +1586,13 @@ export default function App() {
                     }}
                     className="bg-zinc-50 p-5 rounded-[24px] border border-zinc-100 space-y-4 shadow-inner"
                   >
-                    <input name="description" placeholder="Ex: Bónus, Aumento Salarial" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-400 transition-all" />
+                    <input name="description" placeholder="Ex: Bonus, Salary Increase" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-400 transition-all" />
                     <div className="grid grid-cols-2 gap-3">
-                      <input name="amount" type="number" placeholder="Valor" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-400 transition-all" />
+                      <input name="amount" type="number" placeholder="Value" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-400 transition-all" />
                       <input name="date" type="date" className="w-full bg-white border-none rounded-xl px-4 py-3 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-400 transition-all" />
                     </div>
                     <button type="submit" className="w-full bg-emerald-600 text-white py-3 rounded-xl text-xs font-black uppercase tracking-widest shadow-lg shadow-emerald-200 hover:bg-emerald-700 transition-all active:scale-[0.98]">
-                      Adicionar à Simulação
+                      Add to Simulation
                     </button>
                   </form>
                   
@@ -1414,7 +1603,7 @@ export default function App() {
                           <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
                           <div>
                             <p className="text-sm font-black text-zinc-900">{inc.description}</p>
-                            <p className="text-[10px] text-zinc-400 font-bold uppercase">{format(parseISO(inc.date), 'dd MMM', { locale: ptBR })}</p>
+                            <p className="text-[10px] text-zinc-400 font-bold uppercase">{format(parseISO(inc.date), 'dd MMM', { locale: enUS })}</p>
                           </div>
                         </div>
                         <div className="flex items-center gap-4">
@@ -1441,7 +1630,7 @@ export default function App() {
                 onClick={() => setIsSimPanelOpen(false)}
                 className="w-full bg-zinc-900 text-white py-4 rounded-[20px] font-black uppercase tracking-widest shadow-xl shadow-zinc-200 hover:bg-zinc-800 transition-all active:scale-[0.98]"
               >
-                Ver Impacto no Forecast
+                See Impact on Forecast
               </button>
             </div>
           </div>
@@ -1457,8 +1646,8 @@ export default function App() {
                   <Brain size={24} />
                 </div>
                 <div>
-                  <h2 className="text-xl font-black tracking-tight text-indigo-900">Assistente Financeiro AI</h2>
-                  <p className="text-[10px] text-indigo-600 uppercase font-bold tracking-widest">Inteligência Artificial</p>
+                  <h2 className="text-xl font-black tracking-tight text-indigo-900">AI Financial Assistant</h2>
+                  <p className="text-[10px] text-indigo-600 uppercase font-bold tracking-widest">Artificial Intelligence</p>
                 </div>
               </div>
               <button onClick={() => setIsAIPanelOpen(false)} className="p-2 text-indigo-400 hover:bg-indigo-100 rounded-xl transition-colors">
@@ -1472,7 +1661,7 @@ export default function App() {
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center gap-2">
                     <Sparkles size={14} className="text-indigo-500" />
-                    <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Análise de Saúde</h3>
+                    <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Health Analysis</h3>
                   </div>
                   <button 
                     onClick={handleRunAIAnalysis}
@@ -1480,21 +1669,21 @@ export default function App() {
                     className="text-[10px] font-black text-indigo-600 uppercase tracking-widest hover:text-indigo-700 disabled:opacity-50 flex items-center gap-1.5"
                   >
                     {isAnalyzing ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />}
-                    Analisar Finanças
+                    Analyze Finances
                   </button>
                 </div>
 
                 {!aiAnalysis && !isAnalyzing && (
                   <div className="bg-zinc-50 rounded-2xl p-8 text-center border-2 border-dashed border-zinc-100">
                     <Brain size={32} className="mx-auto text-zinc-200 mb-3" />
-                    <p className="text-xs font-bold text-zinc-400 uppercase">Clique em analisar para começar</p>
+                    <p className="text-xs font-bold text-zinc-400 uppercase">Click analyze to start</p>
                   </div>
                 )}
 
                 {isAnalyzing && (
                   <div className="bg-indigo-50 rounded-2xl p-8 text-center border border-indigo-100 animate-pulse">
                     <Loader2 size={32} className="mx-auto text-indigo-400 mb-3 animate-spin" />
-                    <p className="text-xs font-black text-indigo-600 uppercase tracking-widest">O Assistente está a analisar os seus dados...</p>
+                    <p className="text-xs font-black text-indigo-600 uppercase tracking-widest">The Assistant is analyzing your data...</p>
                   </div>
                 )}
 
@@ -1503,27 +1692,27 @@ export default function App() {
                     {/* Health Summary */}
                     <div className={cn(
                       "p-5 rounded-[24px] border shadow-sm flex items-center gap-4",
-                      aiAnalysis.healthStatus === 'Boa' ? "bg-emerald-50 border-emerald-100" :
-                      aiAnalysis.healthStatus === 'Moderada' ? "bg-amber-50 border-amber-100" :
+                      aiAnalysis.healthStatus === 'Good' ? "bg-emerald-50 border-emerald-100" :
+                      aiAnalysis.healthStatus === 'Moderate' ? "bg-amber-50 border-amber-100" :
                       "bg-rose-50 border-rose-100"
                     )}>
                       <div className={cn(
                         "w-12 h-12 rounded-2xl flex items-center justify-center shrink-0",
-                        aiAnalysis.healthStatus === 'Boa' ? "bg-emerald-100 text-emerald-600" :
-                        aiAnalysis.healthStatus === 'Moderada' ? "bg-amber-100 text-amber-600" :
+                        aiAnalysis.healthStatus === 'Good' ? "bg-emerald-100 text-emerald-600" :
+                        aiAnalysis.healthStatus === 'Moderate' ? "bg-amber-100 text-amber-600" :
                         "bg-rose-100 text-rose-600"
                       )}>
-                        {aiAnalysis.healthStatus === 'Boa' ? <CheckCircle2 size={24} /> :
-                         aiAnalysis.healthStatus === 'Moderada' ? <AlertCircle size={24} /> :
+                        {aiAnalysis.healthStatus === 'Good' ? <CheckCircle2 size={24} /> :
+                         aiAnalysis.healthStatus === 'Moderate' ? <AlertCircle size={24} /> :
                          <AlertTriangle size={24} />}
                       </div>
                       <div>
                         <p className={cn(
                           "text-[10px] font-black uppercase tracking-widest",
-                          aiAnalysis.healthStatus === 'Boa' ? "text-emerald-600" :
-                          aiAnalysis.healthStatus === 'Moderada' ? "text-amber-600" :
+                          aiAnalysis.healthStatus === 'Good' ? "text-emerald-600" :
+                          aiAnalysis.healthStatus === 'Moderate' ? "text-amber-600" :
                           "text-rose-600"
-                        )}>Saúde Financeira: {aiAnalysis.healthStatus}</p>
+                        )}>Financial Health: {aiAnalysis.healthStatus}</p>
                         <p className="text-sm font-bold text-zinc-900 leading-tight mt-0.5">{aiAnalysis.healthSummary}</p>
                       </div>
                     </div>
@@ -1556,7 +1745,7 @@ export default function App() {
                     <div className="bg-zinc-900 rounded-[24px] p-6 text-white space-y-4">
                       <div className="flex items-center gap-2">
                         <Target size={16} className="text-indigo-400" />
-                        <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Sugestões Práticas</h4>
+                        <h4 className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Practical Suggestions</h4>
                       </div>
                       <ul className="space-y-3">
                         {aiAnalysis.suggestions.map((s, idx) => (
@@ -1575,16 +1764,16 @@ export default function App() {
               <div className="space-y-4 pt-4 border-t border-zinc-100">
                 <div className="flex items-center gap-2 px-1">
                   <MessageSquare size={14} className="text-indigo-500" />
-                  <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Perguntar à AI</h3>
+                  <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Ask AI</h3>
                 </div>
 
                 <div className="space-y-4">
                   {chatHistory.length === 0 && (
                     <div className="grid grid-cols-1 gap-2">
                       {[
-                        "Posso comprar um carro de 10.000 CHF?",
-                        "Quanto posso gastar por semana?",
-                        "Se aumentar a renda em 300 CHF o que acontece?"
+                        "Can I buy a 10,000 CHF car?",
+                        "How much can I spend per week?",
+                        "What happens if I increase income by 300 CHF?"
                       ].map((q, idx) => (
                         <button 
                           key={idx}
@@ -1641,7 +1830,7 @@ export default function App() {
                     <input 
                       value={chatInput}
                       onChange={(e) => setChatInput(e.target.value)}
-                      placeholder="Faça uma pergunta..."
+                      placeholder="Ask a question..."
                       className="w-full bg-zinc-50 border-none rounded-2xl pl-5 pr-14 py-4 font-bold outline-none focus:ring-2 focus:ring-indigo-600 transition-all shadow-inner"
                     />
                     <button 
@@ -1661,7 +1850,7 @@ export default function App() {
                 onClick={() => setIsAIPanelOpen(false)}
                 className="w-full bg-zinc-900 text-white py-4 rounded-[20px] font-black uppercase tracking-widest shadow-xl shadow-zinc-200 hover:bg-zinc-800 transition-all active:scale-[0.98]"
               >
-                Fechar Assistente
+                Close Assistant
               </button>
             </div>
           </div>
@@ -1686,9 +1875,9 @@ export default function App() {
                 </div>
                 <div>
                   <h2 className="text-xl font-black tracking-tight">
-                    {editingItem ? 'Editar' : 'Adicionar'} {modalType === 'income' ? 'Receita' : modalType === 'expense' ? 'Despesa Fixa' : modalType === 'goal' ? 'Meta' : 'Evento'}
+                    {editingItem ? 'Edit' : 'Add'} {modalType === 'income' ? 'Income' : modalType === 'expense' ? 'Fixed Expense' : modalType === 'goal' ? 'Goal' : 'Event'}
                   </h2>
-                  <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest">Gestão Financeira</p>
+                  <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest">Financial Management</p>
                 </div>
               </div>
               <button onClick={() => { setIsModalOpen(false); setEditingItem(null); }} className="p-2 text-zinc-400 hover:bg-zinc-100 rounded-xl transition-colors">
@@ -1697,19 +1886,19 @@ export default function App() {
             </div>
             <form key={editingItem?.id || 'new'} onSubmit={handleAddItem} className="p-8 space-y-6">
               <div className="space-y-2">
-                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Descrição</label>
+                <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Description</label>
                 <input 
                   name={modalType === 'event' ? 'description' : 'name'} 
                   defaultValue={editingItem ? (modalType === 'event' ? editingItem.description : editingItem.name) : ''}
                   required 
-                  placeholder={modalType === 'goal' ? "Ex: Comprar Carro, Férias..." : "Ex: Salário, Renda, Seguro..."}
+                  placeholder={modalType === 'goal' ? "Ex: Buy Car, Vacation..." : "Ex: Salary, Rent, Insurance..."}
                   className="w-full bg-zinc-50 border-none rounded-2xl px-5 py-4 font-bold outline-none focus:ring-2 focus:ring-zinc-900 transition-all shadow-inner" 
                 />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">
-                    {modalType === 'goal' ? 'Valor Alvo' : 'Valor'} ({CURRENCY})
+                    {modalType === 'goal' ? 'Target Amount' : 'Amount'} ({settings.currency})
                   </label>
                   <input 
                     name={modalType === 'goal' ? 'target_amount' : 'amount'} 
@@ -1724,7 +1913,7 @@ export default function App() {
                 
                 {modalType === 'income' || modalType === 'expense' ? (
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Dia do Mês</label>
+                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Day of Month</label>
                     <input 
                       name="day_of_month" 
                       type="number" 
@@ -1739,7 +1928,7 @@ export default function App() {
                 ) : (
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">
-                      {modalType === 'goal' ? 'Data Alvo' : 'Data'}
+                      {modalType === 'goal' ? 'Target Date' : 'Date'}
                     </label>
                     <input 
                       name={modalType === 'goal' ? 'target_date' : 'date'} 
@@ -1760,15 +1949,15 @@ export default function App() {
                     defaultChecked={editingItem?.is_completed}
                     className="w-5 h-5 rounded-lg border-zinc-200 text-zinc-900 focus:ring-zinc-900"
                   />
-                  <label className="text-xs font-bold text-zinc-600 uppercase tracking-widest">Meta Concluída</label>
+                  <label className="text-xs font-bold text-zinc-600 uppercase tracking-widest">Goal Completed</label>
                 </div>
               )}
 
               {modalType === 'income' && settings.is_couple_mode && (
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Dono da Receita</label>
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Income Owner</label>
                   <div className="grid grid-cols-3 gap-2">
-                    {['rodrigo', 'ana', 'shared'].map(owner => (
+                    {['user1', 'user2', 'shared'].map(owner => (
                       <label key={owner} className="relative cursor-pointer">
                         <input 
                           type="radio" 
@@ -1778,7 +1967,7 @@ export default function App() {
                           className="peer sr-only"
                         />
                         <div className="flex items-center justify-center py-3 rounded-xl bg-zinc-50 border border-zinc-100 text-[10px] font-black uppercase text-zinc-400 peer-checked:bg-zinc-900 peer-checked:text-white peer-checked:border-zinc-900 transition-all">
-                          {owner === 'rodrigo' ? 'Rodrigo' : owner === 'ana' ? 'Ana' : 'Ambos'}
+                          {owner === 'user1' ? 'User 1' : owner === 'user2' ? 'User 2' : 'Both'}
                         </div>
                       </label>
                     ))}
@@ -1793,7 +1982,7 @@ export default function App() {
                   modalType === 'expense' ? "bg-rose-600 text-white shadow-rose-100 hover:bg-rose-700" : 
                   "bg-amber-500 text-white shadow-amber-100 hover:bg-amber-600"
                 )}>
-                  <Save size={20} /> {editingItem ? 'Guardar Alterações' : 'Adicionar Item'}
+                  <Save size={20} /> {editingItem ? 'Save Changes' : 'Add Item'}
                 </button>
               </div>
             </form>
@@ -1837,9 +2026,9 @@ function ForecastExplanation({ week, onClose, formatCurrency, settings }: {
       >
         <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
           <div>
-            <h3 className="text-lg font-black text-zinc-900 tracking-tight">Explicação da Previsão</h3>
+            <h3 className="text-lg font-black text-zinc-900 tracking-tight">Forecast Explanation</h3>
             <p className="text-xs font-bold text-zinc-500 uppercase tracking-wider">
-              Semana {week.week_number} — {week.start_date} até {week.end_date}
+              Week {week.week_number} — {format(parseISO(week.start_date), 'dd/MM')} to {format(parseISO(week.end_date), 'dd/MM')}
             </p>
           </div>
           <button 
@@ -1854,18 +2043,18 @@ function ForecastExplanation({ week, onClose, formatCurrency, settings }: {
           {/* Summary */}
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-zinc-50 rounded-2xl p-4 border border-zinc-100">
-              <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Saldo Inicial</p>
+              <p className="text-[10px] font-bold text-zinc-400 uppercase mb-1">Starting Balance</p>
               <p className="text-lg font-black text-zinc-900">{formatCurrency(week.start_balance)}</p>
             </div>
             <div className="bg-zinc-900 rounded-2xl p-4 border border-zinc-800">
-              <p className="text-[10px] font-bold text-zinc-500 uppercase mb-1">Saldo Final</p>
+              <p className="text-[10px] font-bold text-zinc-500 uppercase mb-1">Ending Balance</p>
               <p className="text-lg font-black text-white">{formatCurrency(week.projected_balance)}</p>
             </div>
           </div>
 
           {/* Movements */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-1">Movimentações da Semana</h4>
+            <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest px-1">Weekly Movements</h4>
             <div className="space-y-2">
               {week.movements.map((m, idx) => (
                 <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-zinc-50/50 border border-zinc-100">
@@ -1880,7 +2069,7 @@ function ForecastExplanation({ week, onClose, formatCurrency, settings }: {
                     </div>
                     <div>
                       <p className="text-sm font-bold text-zinc-900">{m.name}</p>
-                      <p className="text-[10px] font-medium text-zinc-400 uppercase">{m.type === 'income' ? 'Receita' : m.type === 'spending' ? 'Gasto Estimado' : 'Despesa'}</p>
+                      <p className="text-[10px] font-medium text-zinc-400 uppercase">{m.type === 'income' ? 'Income' : m.type === 'spending' ? 'Est. Spending' : 'Expense'}</p>
                     </div>
                   </div>
                   <p className={cn(
@@ -1892,7 +2081,7 @@ function ForecastExplanation({ week, onClose, formatCurrency, settings }: {
                 </div>
               ))}
               {week.movements.length === 0 && (
-                <p className="text-center py-4 text-sm text-zinc-400 italic">Nenhuma movimentação específica nesta semana.</p>
+                <p className="text-center py-4 text-sm text-zinc-400 italic">No specific movements this week.</p>
               )}
             </div>
           </div>
@@ -1902,9 +2091,9 @@ function ForecastExplanation({ week, onClose, formatCurrency, settings }: {
             <div className="bg-rose-50 border border-rose-100 rounded-2xl p-4 flex items-start gap-3">
               <AlertTriangle className="text-rose-500 shrink-0" size={20} />
               <div>
-                <p className="text-sm font-bold text-rose-900">Atenção ao Limite</p>
+                <p className="text-sm font-bold text-rose-900">Limit Warning</p>
                 <p className="text-xs text-rose-600 font-medium mt-0.5">
-                  ⚠ Saldo abaixo do limite de segurança ({formatCurrency(settings.safety_threshold)}) nesta semana.
+                  ⚠ Balance below safety limit ({formatCurrency(settings.safety_threshold)}) this week.
                 </p>
               </div>
             </div>
@@ -1916,7 +2105,7 @@ function ForecastExplanation({ week, onClose, formatCurrency, settings }: {
             onClick={onClose}
             className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-xl shadow-zinc-200"
           >
-            Entendido
+            Got it
           </button>
         </div>
       </div>
@@ -1936,9 +2125,9 @@ function SettingsQuickEdit({ type, settings, onClose, onSave }: {
     settings.safety_threshold
   );
 
-  const title = type === 'balance' ? 'Saldo Atual' :
-                type === 'spending' ? 'Gasto Semanal Estimado' :
-                'Limite de Segurança';
+  const title = type === 'balance' ? 'Current Balance' :
+                type === 'spending' ? 'Est. Weekly Spending' :
+                'Safety Limit';
 
   const field = type === 'balance' ? 'current_balance' :
                 type === 'spending' ? 'weekly_spending_estimate' :
@@ -1948,7 +2137,7 @@ function SettingsQuickEdit({ type, settings, onClose, onSave }: {
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-300">
       <div className="bg-white w-full max-sm rounded-t-[32px] sm:rounded-[32px] overflow-hidden shadow-2xl animate-in slide-in-from-bottom-10 duration-500">
         <div className="p-6 border-b border-zinc-100 flex items-center justify-between bg-zinc-50/50">
-          <h3 className="text-lg font-black text-zinc-900 tracking-tight">Alterar {title}</h3>
+          <h3 className="text-lg font-black text-zinc-900 tracking-tight">Change {title}</h3>
           <button 
             onClick={onClose}
             className="w-10 h-10 rounded-2xl bg-white border border-zinc-200 flex items-center justify-center text-zinc-400 hover:text-zinc-900 hover:border-zinc-300 transition-all shadow-sm"
@@ -1958,7 +2147,7 @@ function SettingsQuickEdit({ type, settings, onClose, onSave }: {
         </div>
         <div className="p-6 space-y-6">
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Novo Valor (CHF)</label>
+            <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">New Value ({settings.currency})</label>
             <input 
               type="number" 
               value={value}
@@ -1971,7 +2160,7 @@ function SettingsQuickEdit({ type, settings, onClose, onSave }: {
             onClick={() => onSave({ [field]: value })}
             className="w-full py-4 bg-zinc-900 text-white rounded-2xl font-bold text-sm hover:bg-zinc-800 transition-all shadow-xl shadow-zinc-200 flex items-center justify-center gap-2"
           >
-            <Save size={18} /> Guardar Alteração
+            <Save size={18} /> Save Change
           </button>
         </div>
       </div>

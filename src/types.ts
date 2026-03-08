@@ -3,6 +3,9 @@ export interface AppSettings {
   weekly_spending_estimate: number;
   safety_threshold: number;
   is_couple_mode: boolean;
+  currency: string;
+  remittance_currency: string;
+  exchange_rate: number;
 }
 
 export interface Income {
@@ -61,7 +64,7 @@ export interface AIInsight {
 
 export interface AIAnalysis {
   healthSummary: string;
-  healthStatus: 'Moderada' | 'Boa' | 'Risco';
+  healthStatus: 'Moderate' | 'Good' | 'Risk';
   insights: AIInsight[];
   suggestions: string[];
 }
