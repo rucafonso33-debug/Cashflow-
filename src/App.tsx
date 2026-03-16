@@ -64,6 +64,8 @@ import {
   db, 
   googleProvider, 
   signInWithPopup, 
+  signInWithRedirect,
+  getRedirectResult,
   signOut, 
   onAuthStateChanged, 
   doc, 
@@ -72,6 +74,7 @@ import {
   setDoc, 
   updateDoc, 
   deleteDoc, 
+  getDocs,
   handleFirestoreError,
   OperationType,
   User
@@ -170,9 +173,23 @@ function App() {
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
+      console.log("Auth state changed:", user ? "Logged in" : "Logged out");
       setUser(user);
       setIsAuthReady(true);
     });
+
+    // Handle redirect result
+    getRedirectResult(auth).then((result) => {
+      if (result?.user) {
+        console.log("Redirect login success:", result.user.email);
+      }
+    }).catch((error) => {
+      console.error("Redirect login error:", error);
+      if (error.code === 'auth/unauthorized-domain') {
+        alert(`Domain not authorized. Please add ${window.location.hostname} to Firebase Authorized Domains.`);
+      }
+    });
+
     return () => unsubscribe();
   }, []);
 
@@ -607,10 +624,44 @@ function App() {
     }
   };
 
-  const handleResetData = () => {
+  const handleResetData = async () => {
+    if (!user) return;
     if (window.confirm('Are you sure you want to reset all financial data? This cannot be undone.')) {
-      localStorage.removeItem('futureflow_data');
-      window.location.reload();
+      try {
+        setLoading(true);
+        const userId = user.uid;
+
+        // 1. Reset Settings to trigger onboarding
+        const initialSettings: AppSettings = {
+          current_balance: 0,
+          weekly_spending_estimate: 0,
+          safety_threshold: 1000,
+          is_couple_mode: true,
+          currency: 'CHF',
+          remittance_currency: 'EUR',
+          exchange_rate: 1.05,
+          language: 'en',
+          onboarding_completed: false
+        };
+        await setDoc(doc(db, 'users', userId, 'settings', 'current'), initialSettings);
+
+        // 2. Clear all sub-collections
+        const collectionsToClear = ['incomes', 'fixedExpenses', 'events', 'goals'];
+        for (const colName of collectionsToClear) {
+          const colRef = collection(db, 'users', userId, colName);
+          const snapshot = await getDocs(colRef);
+          const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'users', userId, colName, d.id)));
+          await Promise.all(deletePromises);
+        }
+
+        localStorage.removeItem('futureflow_data');
+        window.location.reload();
+      } catch (error) {
+        console.error("Reset error:", error);
+        alert("Failed to reset data. Please try again.");
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -1023,20 +1074,44 @@ function App() {
               Sign in to sync your data across devices.
             </p>
           </div>
-          <button
-            onClick={async () => {
-              try {
-                await signInWithPopup(auth, googleProvider);
-              } catch (error: any) {
-                console.error("Login error:", error);
-                alert(`Login failed: ${error.message}. If you are on Vercel, make sure to add your domain to Firebase Authorized Domains.`);
-              }
-            }}
-            className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-zinc-800 transition-all shadow-lg"
-          >
-            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
-            Continue with Google
-          </button>
+          <div className="space-y-3">
+            <button
+              onClick={async () => {
+                try {
+                  console.log("Starting popup login...");
+                  await signInWithPopup(auth, googleProvider);
+                } catch (error: any) {
+                  console.error("Popup login error:", error);
+                  if (error.code === 'auth/popup-blocked') {
+                    alert("Popup blocked! Please allow popups for this site or try the 'Redirect' option below.");
+                  } else if (error.code === 'auth/unauthorized-domain') {
+                    alert(`Domain not authorized. Please add ${window.location.hostname} to Firebase Authorized Domains.`);
+                  } else {
+                    alert(`Login failed: ${error.message}`);
+                  }
+                }
+              }}
+              className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-zinc-800 transition-all shadow-lg"
+            >
+              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+              Continue with Google
+            </button>
+
+            <button
+              onClick={async () => {
+                try {
+                  console.log("Starting redirect login...");
+                  await signInWithRedirect(auth, googleProvider);
+                } catch (error: any) {
+                  console.error("Redirect login error:", error);
+                  alert(`Redirect failed: ${error.message}`);
+                }
+              }}
+              className="w-full bg-white text-zinc-600 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-zinc-50 transition-all border border-zinc-200"
+            >
+              Trouble logging in? Try Redirect
+            </button>
+          </div>
           <div className="pt-4">
             <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest">
               Securely powered by Google Cloud
