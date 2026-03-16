@@ -1,0 +1,183 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users/{userId}/settings
+    // Document ID: current
+    // Fields:
+    //   - current_balance: number (required)
+    //   - weekly_spending_estimate: number (required)
+    //   - safety_threshold: number (required)
+    //   - is_couple_mode: boolean (required)
+    //   - currency: string (required)
+    //   - remittance_currency: string (optional)
+    //   - exchange_rate: number (optional)
+    //   - language: string (required, enum: ['en', 'pt'])
+    //   - onboarding_completed: boolean (required)
+    //   - last_exchange_update: string (optional, ISO 8601)
+    //
+    // Collection: users/{userId}/incomes
+    // Fields:
+    //   - name: string (required)
+    //   - amount: number (required)
+    //   - day_of_month: int (required, 1-31)
+    //   - owner: string (required, enum: ['rodrigo', 'ana', 'shared'])
+    //
+    // Collection: users/{userId}/fixedExpenses
+    // Fields:
+    //   - name: string (required)
+    //   - amount: number (required)
+    //   - day_of_month: int (required, 1-31)
+    //
+    // Collection: users/{userId}/events
+    // Fields:
+    //   - description: string (required)
+    //   - amount: number (required)
+    //   - date: string (required, ISO 8601)
+    //
+    // Collection: users/{userId}/goals
+    // Fields:
+    //   - name: string (required)
+    //   - target_amount: number (required)
+    //   - target_date: string (required, ISO 8601)
+    //   - is_completed: boolean (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "rucafonso33@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidDateString(dateStr) {
+      return dateStr is string && (
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*Z?$") ||
+        dateStr.matches("^\\d{4}-\\d{2}-\\d{2}$")
+      );
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidSettings(data) {
+      return hasRequiredFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'currency', 'language', 'onboarding_completed']) &&
+             hasOnlyAllowedFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'currency', 'remittance_currency', 'exchange_rate', 'language', 'onboarding_completed', 'last_exchange_update']) &&
+             data.current_balance is number &&
+             data.weekly_spending_estimate is number &&
+             data.safety_threshold is number &&
+             data.is_couple_mode is bool &&
+             data.currency is string && data.currency.size() <= 10 &&
+             data.language in ['en', 'pt'] &&
+             data.onboarding_completed is bool &&
+             (!('remittance_currency' in data) || (data.remittance_currency is string && data.remittance_currency.size() <= 10)) &&
+             (!('exchange_rate' in data) || data.exchange_rate is number) &&
+             (!('last_exchange_update' in data) || isValidDateString(data.last_exchange_update));
+    }
+
+    function isValidIncome(data) {
+      return hasRequiredFields(['name', 'amount', 'day_of_month', 'owner']) &&
+             hasOnlyAllowedFields(['name', 'amount', 'day_of_month', 'owner']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.amount is number &&
+             data.day_of_month is int && data.day_of_month >= 1 && data.day_of_month <= 31 &&
+             data.owner in ['rodrigo', 'ana', 'shared'];
+    }
+
+    function isValidFixedExpense(data) {
+      return hasRequiredFields(['name', 'amount', 'day_of_month']) &&
+             hasOnlyAllowedFields(['name', 'amount', 'day_of_month']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.amount is number &&
+             data.day_of_month is int && data.day_of_month >= 1 && data.day_of_month <= 31;
+    }
+
+    function isValidEvent(data) {
+      return hasRequiredFields(['description', 'amount', 'date']) &&
+             hasOnlyAllowedFields(['description', 'amount', 'date']) &&
+             data.description is string && data.description.size() > 0 && data.description.size() <= 200 &&
+             data.amount is number &&
+             isValidDateString(data.date);
+    }
+
+    function isValidGoal(data) {
+      return hasRequiredFields(['name', 'target_amount', 'target_date', 'is_completed']) &&
+             hasOnlyAllowedFields(['name', 'target_amount', 'target_date', 'is_completed']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.target_amount is number &&
+             isValidDateString(data.target_date) &&
+             data.is_completed is bool;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      
+      match /settings/current {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if (isOwner(userId) || isAdmin()) && isValidSettings(request.resource.data);
+      }
+
+      match /incomes/{incomeId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if (isOwner(userId) || isAdmin()) && isValidIncome(request.resource.data);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /fixedExpenses/{expenseId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if (isOwner(userId) || isAdmin()) && isValidFixedExpense(request.resource.data);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /events/{eventId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if (isOwner(userId) || isAdmin()) && isValidEvent(request.resource.data);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+
+      match /goals/{goalId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create, update: if (isOwner(userId) || isAdmin()) && isValidGoal(request.resource.data);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

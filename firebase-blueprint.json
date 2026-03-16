@@ -1,0 +1,90 @@
+{
+  "entities": {
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "User preferences and global financial settings",
+      "type": "object",
+      "properties": {
+        "current_balance": { "type": "number" },
+        "weekly_spending_estimate": { "type": "number" },
+        "safety_threshold": { "type": "number" },
+        "is_couple_mode": { "type": "boolean" },
+        "currency": { "type": "string" },
+        "remittance_currency": { "type": "string" },
+        "exchange_rate": { "type": "number" },
+        "language": { "type": "string", "enum": ["en", "pt"] },
+        "onboarding_completed": { "type": "boolean" },
+        "last_exchange_update": { "type": "string", "format": "date-time" }
+      },
+      "required": ["current_balance", "weekly_spending_estimate", "safety_threshold", "is_couple_mode", "currency", "language", "onboarding_completed"]
+    },
+    "Income": {
+      "title": "Income",
+      "description": "A source of monthly income",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "amount": { "type": "number" },
+        "day_of_month": { "type": "integer" },
+        "owner": { "type": "string", "enum": ["rodrigo", "ana", "shared"] }
+      },
+      "required": ["name", "amount", "day_of_month", "owner"]
+    },
+    "FixedExpense": {
+      "title": "FixedExpense",
+      "description": "A recurring monthly expense",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "amount": { "type": "number" },
+        "day_of_month": { "type": "integer" }
+      },
+      "required": ["name", "amount", "day_of_month"]
+    },
+    "FutureEvent": {
+      "title": "FutureEvent",
+      "description": "A one-off future financial event",
+      "type": "object",
+      "properties": {
+        "description": { "type": "string" },
+        "amount": { "type": "number" },
+        "date": { "type": "string", "format": "date-time" }
+      },
+      "required": ["description", "amount", "date"]
+    },
+    "FinancialGoal": {
+      "title": "FinancialGoal",
+      "description": "A long-term financial target",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "target_amount": { "type": "number" },
+        "target_date": { "type": "string", "format": "date-time" },
+        "is_completed": { "type": "boolean" }
+      },
+      "required": ["name", "target_amount", "target_date", "is_completed"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/settings/current": {
+      "schema": "AppSettings",
+      "description": "The user's current settings"
+    },
+    "/users/{userId}/incomes": {
+      "schema": "Income",
+      "description": "Collection of user's monthly incomes"
+    },
+    "/users/{userId}/fixedExpenses": {
+      "schema": "FixedExpense",
+      "description": "Collection of user's recurring expenses"
+    },
+    "/users/{userId}/events": {
+      "schema": "FutureEvent",
+      "description": "Collection of user's one-off future events"
+    },
+    "/users/{userId}/goals": {
+      "schema": "FinancialGoal",
+      "description": "Collection of user's financial goals"
+    }
+  }
+}

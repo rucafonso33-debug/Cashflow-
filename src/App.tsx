@@ -13,7 +13,7 @@ import {
   ChevronRight,
   Info,
   Users,
-  User,
+  User as UserIcon,
   X,
   Save,
   Bell,
@@ -30,7 +30,10 @@ import {
   Brain,
   Bot,
   Send,
-  Loader2
+  Loader2,
+  Globe,
+  Coins,
+  Heart
 } from 'lucide-react';
 import { 
   AreaChart, 
@@ -53,8 +56,29 @@ import {
   getMonth, 
   getYear,
   eachDayOfInterval,
-  isSameDay
+  isSameDay,
+  startOfDay
 } from 'date-fns';
+import { 
+  auth, 
+  db, 
+  googleProvider, 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  doc, 
+  collection, 
+  onSnapshot, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
+  handleFirestoreError,
+  OperationType,
+  User
+} from './firebase';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { Tutorial } from './components/Tutorial';
+import { AICoach } from './components/AICoach';
 import { enUS } from 'date-fns/locale';
 import { fetchExchangeRates } from './services/exchangeService';
 import { AppSettings, Income, FixedExpense, FutureEvent, ForecastWeek, SimulationState, AIAnalysis, ChatMessage, FinancialGoal, Movement } from './types';
@@ -69,7 +93,31 @@ function cn(...inputs: ClassValue[]) {
 
 type Tab = 'forecast' | 'setup' | 'events' | 'goals';
 
-export default function App() {
+export default function AppWrapper() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+const SUPPORTED_CURRENCIES = [
+  { code: 'CHF', name: 'Swiss Franc', symbol: 'Fr.' },
+  { code: 'EUR', name: 'Euro', symbol: '€' },
+  { code: 'USD', name: 'US Dollar', symbol: '$' },
+  { code: 'GBP', name: 'British Pound', symbol: '£' },
+  { code: 'BRL', name: 'Brazilian Real', symbol: 'R$' },
+  { code: 'JPY', name: 'Japanese Yen', symbol: '¥' },
+  { code: 'CAD', name: 'Canadian Dollar', symbol: 'C$' },
+  { code: 'AUD', name: 'Australian Dollar', symbol: 'A$' },
+  { code: 'CNY', name: 'Chinese Yuan', symbol: '¥' },
+  { code: 'INR', name: 'Indian Rupee', symbol: '₹' },
+  { code: 'MXN', name: 'Mexican Peso', symbol: '$' },
+];
+
+function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>('forecast');
   const [settings, setSettings] = useState<AppSettings>({
     current_balance: 0,
@@ -101,45 +149,95 @@ export default function App() {
 
   // AI State
   const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
+  const [isCurrencySelectorOpen, setIsCurrencySelectorOpen] = useState(false);
   const [aiAnalysis, setAIAnalysis] = useState<AIAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [isAsking, setIsAsking] = useState(false);
   const [chatInput, setChatInput] = useState('');
+  const [runTutorial, setRunTutorial] = useState(false);
   const [selectedWeek, setSelectedWeek] = useState<ForecastWeek | null>(null);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [settingsModalType, setSettingsModalType] = useState<'balance' | 'spending' | 'threshold'>('balance');
   const [highlightedWeek, setHighlightedWeek] = useState<number | null>(null);
   const [onboardingStep, setOnboardingStep] = useState(0);
+  const [onboardingData, setOnboardingData] = useState<{
+    incomes: any[];
+    expenses: any[];
+  }>({ incomes: [], expenses: [] });
   const [converterAmount, setConverterAmount] = useState<number>(0);
   const [exchangeRates, setExchangeRates] = useState<Record<string, number>>({});
 
+  // Auth Listener
   useEffect(() => {
-    const savedData = localStorage.getItem('futureflow_data');
-    if (savedData) {
-      const parsed = JSON.parse(savedData);
-      setSettings(parsed.settings);
-      setIncomes(parsed.incomes);
-      setFixedExpenses(parsed.fixedExpenses);
-      setEvents(parsed.events);
-      setGoals(parsed.goals);
-      setLoading(false);
-    } else {
-      fetchData();
-    }
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribe();
   }, []);
 
+  // Firestore Sync
   useEffect(() => {
-    if (!loading) {
-      localStorage.setItem('futureflow_data', JSON.stringify({
-        settings,
-        incomes,
-        fixedExpenses,
-        events,
-        goals
-      }));
-    }
-  }, [settings, incomes, fixedExpenses, events, goals, loading]);
+    if (!isAuthReady || !user) return;
+
+    const userId = user.uid;
+
+    // Settings
+    const settingsUnsubscribe = onSnapshot(doc(db, 'users', userId, 'settings', 'current'), (snapshot) => {
+      if (snapshot.exists()) {
+        setSettings(snapshot.data() as AppSettings);
+      } else {
+        // Initialize settings if they don't exist
+        const initialSettings: AppSettings = {
+          current_balance: 0,
+          weekly_spending_estimate: 0,
+          safety_threshold: 1000,
+          is_couple_mode: true,
+          currency: 'CHF',
+          remittance_currency: 'EUR',
+          exchange_rate: 1.05,
+          language: 'en',
+          onboarding_completed: false
+        };
+        setDoc(doc(db, 'users', userId, 'settings', 'current'), initialSettings)
+          .catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${userId}/settings/current`));
+      }
+      setLoading(false);
+    }, (err) => handleFirestoreError(err, OperationType.GET, `users/${userId}/settings/current`));
+
+    // Incomes
+    const incomesUnsubscribe = onSnapshot(collection(db, 'users', userId, 'incomes'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      setIncomes(data);
+    }, (err) => handleFirestoreError(err, OperationType.GET, `users/${userId}/incomes`));
+
+    // Fixed Expenses
+    const expensesUnsubscribe = onSnapshot(collection(db, 'users', userId, 'fixedExpenses'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      setFixedExpenses(data);
+    }, (err) => handleFirestoreError(err, OperationType.GET, `users/${userId}/fixedExpenses`));
+
+    // Events
+    const eventsUnsubscribe = onSnapshot(collection(db, 'users', userId, 'events'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      setEvents(data);
+    }, (err) => handleFirestoreError(err, OperationType.GET, `users/${userId}/events`));
+
+    // Goals
+    const goalsUnsubscribe = onSnapshot(collection(db, 'users', userId, 'goals'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as any));
+      setGoals(data);
+    }, (err) => handleFirestoreError(err, OperationType.GET, `users/${userId}/goals`));
+
+    return () => {
+      settingsUnsubscribe();
+      incomesUnsubscribe();
+      expensesUnsubscribe();
+      eventsUnsubscribe();
+      goalsUnsubscribe();
+    };
+  }, [isAuthReady, user]);
 
   useEffect(() => {
     const updateRates = async () => {
@@ -162,36 +260,11 @@ export default function App() {
     }
   }, [settings.currency, settings.onboarding_completed]);
 
-  const fetchData = async () => {
-    try {
-      const [sRes, iRes, feRes, eRes, gRes] = await Promise.all([
-        fetch('/api/settings'),
-        fetch('/api/incomes'),
-        fetch('/api/fixed-expenses'),
-        fetch('/api/events'),
-        fetch('/api/goals')
-      ]);
-      
-      const [sData, iData, feData, eData, gData] = await Promise.all([
-        sRes.json(),
-        iRes.json(),
-        feRes.json(),
-        eRes.json(),
-        gRes.json()
-      ]);
-
-      setSettings({
-        ...sData,
-        is_couple_mode: !!sData.is_couple_mode
-      });
-      setIncomes(iData);
-      setFixedExpenses(feData);
-      setEvents(eData);
-      setGoals(gData);
-    } catch (error) {
-      console.error('Error fetching data:', error);
-    } finally {
-      setLoading(false);
+  const handleApplyAIAction = (action: any) => {
+    if (action.type === 'update_spending') {
+      setSettings(prev => ({ ...prev, weekly_spending_estimate: action.value }));
+    } else if (action.type === 'update_threshold') {
+      setSettings(prev => ({ ...prev, safety_threshold: action.value }));
     }
   };
 
@@ -215,17 +288,18 @@ export default function App() {
     }
   };
 
-  const handleAskAI = async (e?: React.FormEvent) => {
+  const handleAskAI = async (e?: React.FormEvent, question?: string) => {
     if (e) e.preventDefault();
-    if (!chatInput.trim() || isAsking) return;
+    const finalQuestion = question || chatInput;
+    if (!finalQuestion.trim() || isAsking) return;
 
-    const userMessage: ChatMessage = { role: 'user', text: chatInput };
+    const userMessage: ChatMessage = { role: 'user', text: finalQuestion };
     setChatHistory(prev => [...prev, userMessage]);
-    setChatInput('');
+    if (!question) setChatInput('');
     setIsAsking(true);
 
     try {
-      const response = await askFinancialQuestion(chatInput, {
+      const response = await askFinancialQuestion(finalQuestion, {
         settings,
         incomes,
         fixedExpenses,
@@ -244,24 +318,112 @@ export default function App() {
   };
 
   const handleSaveSettings = async (newSettings: AppSettings) => {
+    if (!user) return;
     try {
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newSettings),
-      });
-      setSettings(newSettings);
+      const settingsToSave = {
+        ...newSettings,
+        balance_last_updated: newSettings.current_balance !== settings.current_balance 
+          ? new Date().toISOString() 
+          : newSettings.balance_last_updated || settings.balance_last_updated
+      };
+      await setDoc(doc(db, 'users', user.uid, 'settings', 'current'), settingsToSave);
+      setSettings(settingsToSave);
     } catch (error) {
-      console.error('Error saving settings:', error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/settings/current`);
     }
   };
 
+  const handleCurrencyChange = async (newCurrency: string) => {
+    const rates = await fetchExchangeRates(newCurrency);
+    let newRemittance = settings.remittance_currency;
+    
+    if (newCurrency === 'EUR' && newRemittance === 'EUR') newRemittance = 'CHF';
+    else if (newCurrency === 'CHF' && newRemittance === 'CHF') newRemittance = 'EUR';
+    else if (newRemittance === newCurrency) {
+      newRemittance = newCurrency === 'USD' ? 'EUR' : 'USD';
+    }
+
+    if (rates) {
+      setExchangeRates(rates);
+      const newRate = rates[newRemittance] || 1;
+      handleSaveSettings({
+        ...settings,
+        currency: newCurrency,
+        remittance_currency: newRemittance,
+        exchange_rate: newRate,
+        last_exchange_update: new Date().toISOString().split('T')[0]
+      });
+    } else {
+      handleSaveSettings({
+        ...settings,
+        currency: newCurrency,
+        remittance_currency: newRemittance
+      });
+    }
+  };
+
+  const effectiveBalance = useMemo(() => {
+    if (!settings.balance_last_updated) return settings.current_balance;
+    
+    const startDate = parseISO(settings.balance_last_updated);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (isSameDay(startDate, today) || startDate > today) return settings.current_balance;
+
+    let balance = settings.current_balance;
+    
+    // We calculate transactions from the day AFTER balance_last_updated up to YESTERDAY
+    // Today's transactions will be handled by the forecast loop
+    const startOfCalc = new Date(startDate);
+    startOfCalc.setDate(startOfCalc.getDate() + 1);
+    
+    if (startOfCalc > yesterday) return balance;
+
+    const days = eachDayOfInterval({ start: startOfCalc, end: yesterday });
+    
+    days.forEach(day => {
+      const dayNum = getDate(day);
+      
+      incomes.forEach(inc => {
+        if (inc.day_of_month === dayNum) balance += inc.amount;
+      });
+      
+      fixedExpenses.forEach(exp => {
+        if (exp.day_of_month === dayNum) balance -= exp.amount;
+      });
+      
+      events.forEach(evt => {
+        const evtDate = parseISO(evt.date);
+        if (isSameDay(evtDate, day)) balance -= evt.amount;
+      });
+    });
+    
+    return balance;
+  }, [settings.current_balance, settings.balance_last_updated, incomes, fixedExpenses, events]);
+
   const forecast = useMemo(() => {
     const result: ForecastWeek[] = [];
-    let runningBalance = settings.current_balance;
-    let runningSimBalance = settings.current_balance;
+    let runningBalance = effectiveBalance;
+    let runningSimBalance = effectiveBalance;
     const today = new Date();
     
+    // Starting point
+    result.push({
+      week_number: 0,
+      start_date: today.toISOString(),
+      end_date: today.toISOString(),
+      start_balance: effectiveBalance,
+      projected_balance: effectiveBalance,
+      simulated_balance: effectiveBalance,
+      is_below_threshold: effectiveBalance < settings.safety_threshold,
+      is_sim_below_threshold: effectiveBalance < settings.safety_threshold,
+      events: [],
+      incomes: [],
+      movements: []
+    });
+
     for (let i = 0; i < forecastWeeks; i++) {
       const weekStart = addWeeks(startOfWeek(today), i);
       const weekEnd = endOfWeek(weekStart);
@@ -292,6 +454,8 @@ export default function App() {
 
       // Check incomes and fixed expenses for each day of the week
       weekDays.forEach(day => {
+        if (day < startOfDay(today)) return; // Skip days before today
+        
         const dayNum = getDate(day);
         
         incomes.forEach(inc => {
@@ -384,7 +548,7 @@ export default function App() {
       });
     }
     return result;
-  }, [settings, incomes, fixedExpenses, events, simulation]);
+  }, [settings, incomes, fixedExpenses, events, simulation, forecastWeeks]);
 
   const monthlySummary = useMemo(() => {
     const totalIncome = incomes.reduce((sum, inc) => sum + inc.amount, 0);
@@ -512,6 +676,7 @@ export default function App() {
 
   const handleAddItem = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!user) return;
     const formData = new FormData(e.currentTarget);
     const data: any = Object.fromEntries(formData.entries());
     if (data.amount) data.amount = Number(data.amount);
@@ -519,27 +684,23 @@ export default function App() {
     if (data.target_amount) data.target_amount = Number(data.target_amount);
     if (data.is_completed !== undefined) data.is_completed = data.is_completed === 'on';
 
-    let endpoint = '';
-    if (modalType === 'income') endpoint = '/api/incomes';
-    else if (modalType === 'expense') endpoint = '/api/fixed-expenses';
-    else if (modalType === 'goal') endpoint = '/api/goals';
-    else endpoint = '/api/events';
-
-    if (editingItem) {
-      endpoint += `/${editingItem.id}`;
-    }
+    let collectionName = '';
+    if (modalType === 'income') collectionName = 'incomes';
+    else if (modalType === 'expense') collectionName = 'fixedExpenses';
+    else if (modalType === 'goal') collectionName = 'goals';
+    else collectionName = 'events';
 
     try {
-      await fetch(endpoint, {
-        method: editingItem ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      fetchData();
+      const colRef = collection(db, 'users', user.uid, collectionName);
+      if (editingItem) {
+        await setDoc(doc(colRef, editingItem.id), data, { merge: true });
+      } else {
+        await setDoc(doc(colRef), data);
+      }
       setIsModalOpen(false);
       setEditingItem(null);
     } catch (error) {
-      console.error('Error saving item:', error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/${collectionName}`);
     }
   };
 
@@ -549,33 +710,36 @@ export default function App() {
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (type: 'income' | 'expense' | 'event' | 'goal', id: number) => {
-    let endpoint = '';
-    if (type === 'income') endpoint = `/api/incomes/${id}`;
-    else if (type === 'expense') endpoint = `/api/fixed-expenses/${id}`;
-    else if (type === 'goal') endpoint = `/api/goals/${id}`;
-    else endpoint = `/api/events/${id}`;
+  const handleDelete = async (type: 'income' | 'expense' | 'event' | 'goal', id: string) => {
+    if (!user) return;
+    let collectionName = '';
+    if (type === 'income') collectionName = 'incomes';
+    else if (type === 'expense') collectionName = 'fixedExpenses';
+    else if (type === 'goal') collectionName = 'goals';
+    else collectionName = 'events';
 
     try {
-      await fetch(endpoint, { method: 'DELETE' });
-      fetchData();
+      await deleteDoc(doc(db, 'users', user.uid, collectionName, id));
     } catch (error) {
-      console.error('Error deleting item:', error);
+      handleFirestoreError(error, OperationType.DELETE, `users/${user.uid}/${collectionName}/${id}`);
     }
   };
 
   const handleUpdateSettings = async (newSettings: Partial<AppSettings>) => {
+    if (!user) return;
     try {
-      const updated = { ...settings, ...newSettings };
-      await fetch('/api/settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated)
-      });
+      const updated = { 
+        ...settings, 
+        ...newSettings,
+        balance_last_updated: newSettings.current_balance !== undefined 
+          ? new Date().toISOString() 
+          : settings.balance_last_updated
+      };
+      await setDoc(doc(db, 'users', user.uid, 'settings', 'current'), updated, { merge: true });
       setSettings(updated);
       setIsSettingsModalOpen(false);
     } catch (error) {
-      console.error('Error updating settings:', error);
+      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/settings/current`);
     }
   };
 
@@ -588,21 +752,104 @@ export default function App() {
 
   if (!settings.onboarding_completed && !loading) {
     return (
-      <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-6 text-white font-sans">
-        <div className="max-w-md w-full space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-700">
+      <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-6 text-white font-sans overflow-y-auto">
+        <div className="max-w-md w-full space-y-8 py-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
           <div className="text-center space-y-2">
             <div className="w-16 h-16 bg-white rounded-2xl flex items-center justify-center text-zinc-900 mx-auto mb-6 shadow-2xl">
               <Wallet size={32} />
             </div>
-            <h1 className="text-3xl font-black tracking-tight">Welcome to Future Flow</h1>
-            <p className="text-zinc-400 text-sm">Let's set up your financial forecast in 4 simple steps.</p>
+            <h1 className="text-3xl font-black tracking-tight">Welcome to Provera</h1>
+            <p className="text-zinc-400 text-sm">Let's set up your financial planner.</p>
           </div>
 
           <div className="bg-white/5 border border-white/10 rounded-3xl p-8 space-y-8">
+            {/* Step 0: Mode Selection */}
             {onboardingStep === 0 && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="space-y-4">
+                  <div className="w-20 h-20 bg-white/10 rounded-[32px] flex items-center justify-center mx-auto mb-6">
+                    <Users size={40} className="text-white" />
+                  </div>
+                  <h2 className="text-3xl font-black text-center tracking-tight leading-tight">
+                    How will you use <span className="text-emerald-400">Provera</span>?
+                  </h2>
+                  <p className="text-zinc-400 text-center text-sm max-w-[280px] mx-auto leading-relaxed">
+                    Choose your planning mode. This will help us tailor the experience for you or your family.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-4">
+                  <button 
+                    onClick={() => {
+                      setSettings(s => ({ ...s, is_couple_mode: false }));
+                      setOnboardingStep(1);
+                    }}
+                    className="group bg-white/10 hover:bg-white/20 p-6 rounded-[32px] border border-white/5 transition-all text-left flex items-center gap-6"
+                  >
+                    <div className="w-14 h-14 bg-white/10 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <UserIcon size={28} className="text-white" />
+                    </div>
+                    <div>
+                      <h3 className="font-black text-lg">Solo Mode</h3>
+                      <p className="text-xs text-zinc-400 font-medium">Manage your personal finances individually.</p>
+                    </div>
+                  </button>
+
+                  <button 
+                    onClick={() => {
+                      setSettings(s => ({ ...s, is_couple_mode: true }));
+                      setOnboardingStep(1);
+                    }}
+                    className="group bg-white/10 hover:bg-white/20 p-6 rounded-[32px] border border-white/5 transition-all text-left flex items-center gap-6"
+                  >
+                    <div className="w-14 h-14 bg-emerald-500/20 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      <Heart size={28} className="text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="font-black text-lg">Couple Mode</h3>
+                      <p className="text-xs text-zinc-400 font-medium">Shared management with your partner. Track individual and joint incomes/expenses.</p>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Step 1: Balance */}
+            {onboardingStep === 1 && (
               <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Step 1: Current Balance</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Step 2: Current Balance</label>
+                    <div className="relative">
+                      <button 
+                        onClick={() => setIsCurrencySelectorOpen(!isCurrencySelectorOpen)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 rounded-xl text-[10px] font-bold hover:bg-white/20 transition-all border border-white/5"
+                      >
+                        <Globe size={12} />
+                        {settings.currency}
+                      </button>
+                      {isCurrencySelectorOpen && (
+                        <div className="absolute right-0 top-full mt-2 w-48 bg-zinc-800 border border-white/10 rounded-2xl shadow-2xl z-50 p-2 grid grid-cols-2 gap-1 animate-in zoom-in-95 duration-200">
+                          {SUPPORTED_CURRENCIES.map(curr => (
+                            <button
+                              key={curr.code}
+                              onClick={() => {
+                                handleCurrencyChange(curr.code);
+                                setIsCurrencySelectorOpen(false);
+                              }}
+                              className={cn(
+                                "px-2 py-2 rounded-xl text-[10px] font-bold transition-all text-left flex items-center justify-between",
+                                settings.currency === curr.code ? "bg-white text-zinc-900" : "hover:bg-white/10 text-zinc-400"
+                              )}
+                            >
+                              <span>{curr.code}</span>
+                              <span className="opacity-50">{curr.symbol}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <p className="text-sm text-zinc-300">How much money do you have in your bank account right now?</p>
                 </div>
                 <div className="relative">
@@ -612,20 +859,40 @@ export default function App() {
                     autoFocus
                     placeholder="0.00"
                     className="w-full bg-white/10 border-none rounded-2xl pl-14 pr-4 py-4 text-2xl font-bold focus:ring-2 focus:ring-white outline-none transition-all"
-                    onKeyDown={(e) => e.key === 'Enter' && setOnboardingStep(1)}
+                    onKeyDown={(e) => e.key === 'Enter' && setOnboardingStep(2)}
                     onChange={(e) => setSettings(s => ({ ...s, current_balance: Number(e.target.value) }))}
                   />
                 </div>
+                <button 
+                  onClick={() => setOnboardingStep(2)}
+                  className="w-full bg-white text-zinc-900 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
+                >
+                  Continue
+                </button>
               </div>
             )}
 
-            {onboardingStep === 1 && (
+            {/* Step 2: Incomes */}
+            {onboardingStep === 2 && (
               <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Step 2: Monthly Income</label>
-                  <p className="text-sm text-zinc-300">Add your main monthly income (salary, etc).</p>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Step 3: Monthly Incomes</label>
+                  <p className="text-sm text-zinc-300">Add monthly incomes {settings.is_couple_mode ? 'for both of you' : ''}.</p>
                 </div>
-                <div className="space-y-4">
+                
+                <div className="space-y-3">
+                  {onboardingData.incomes.map((inc, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                      <div>
+                        <p className="font-bold text-sm">{inc.name}</p>
+                        <p className="text-[10px] text-zinc-500 uppercase font-black">{inc.owner} • Day {inc.day_of_month}</p>
+                      </div>
+                      <p className="font-black text-emerald-400">+{formatCurrency(inc.amount)}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-white/5 p-6 rounded-[32px] border border-white/10 space-y-4">
                   <input 
                     type="text" 
                     placeholder="Income Name (e.g. Salary)"
@@ -646,31 +913,88 @@ export default function App() {
                       id="onboarding-income-day"
                     />
                   </div>
+                  {settings.is_couple_mode && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {['rodrigo', 'partner', 'shared'].map(owner => (
+                        <button
+                          key={owner}
+                          id={`owner-${owner}`}
+                          onClick={(e) => {
+                            const btns = e.currentTarget.parentElement?.querySelectorAll('button');
+                            btns?.forEach(b => b.classList.remove('bg-white', 'text-zinc-900'));
+                            btns?.forEach(b => b.classList.add('bg-white/10', 'text-white'));
+                            e.currentTarget.classList.remove('bg-white/10', 'text-white');
+                            e.currentTarget.classList.add('bg-white', 'text-zinc-900');
+                            (e.currentTarget as any).dataset.selected = 'true';
+                          }}
+                          className={cn(
+                            "py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                            owner === 'shared' ? "bg-white text-zinc-900" : "bg-white/10 text-white"
+                          )}
+                        >
+                          {owner === 'rodrigo' ? 'Rodrigo' : owner === 'partner' ? 'Partner' : 'Both'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <button 
                     onClick={() => {
                       const name = (document.getElementById('onboarding-income-name') as HTMLInputElement).value;
                       const amount = Number((document.getElementById('onboarding-income-amount') as HTMLInputElement).value);
                       const day = Number((document.getElementById('onboarding-income-day') as HTMLInputElement).value);
+                      let owner = 'shared';
+                      if (settings.is_couple_mode) {
+                        const selected = document.querySelector('[data-selected="true"]');
+                        if (selected) owner = selected.id.replace('owner-', '');
+                      }
+                      
                       if (name && amount) {
-                        setIncomes([...incomes, { id: Date.now(), name, amount, day_of_month: day, owner: 'shared' }]);
-                        setOnboardingStep(2);
+                        setOnboardingData(prev => ({
+                          ...prev,
+                          incomes: [...prev.incomes, { name, amount, day_of_month: day, owner }]
+                        }));
+                        (document.getElementById('onboarding-income-name') as HTMLInputElement).value = '';
+                        (document.getElementById('onboarding-income-amount') as HTMLInputElement).value = '';
+                        (document.getElementById('onboarding-income-day') as HTMLInputElement).value = '';
                       }
                     }}
-                    className="w-full bg-white text-zinc-900 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
+                    className="w-full bg-white/10 text-white py-3 rounded-2xl font-bold text-xs uppercase hover:bg-white/20 transition-all border border-dashed border-white/20"
                   >
-                    Next Step
+                    + Add Income
                   </button>
                 </div>
+
+                <button 
+                  onClick={() => setOnboardingStep(3)}
+                  disabled={onboardingData.incomes.length === 0}
+                  className="w-full bg-white text-zinc-900 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-200 transition-all disabled:opacity-50"
+                >
+                  Next Step
+                </button>
               </div>
             )}
 
-            {onboardingStep === 2 && (
+            {/* Step 3: Expenses */}
+            {onboardingStep === 3 && (
               <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Step 3: Fixed Expenses</label>
-                  <p className="text-sm text-zinc-300">Add a major fixed expense (e.g. Rent).</p>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Step 4: Fixed Expenses</label>
+                  <p className="text-sm text-zinc-300">Add your recurring bills (Rent, Netflix, etc).</p>
                 </div>
-                <div className="space-y-4">
+
+                <div className="space-y-3">
+                  {onboardingData.expenses.map((exp, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/10">
+                      <div>
+                        <p className="font-bold text-sm">{exp.name}</p>
+                        <p className="text-[10px] text-zinc-500 uppercase font-black">{exp.owner ? `${exp.owner} • ` : ''}Day {exp.day_of_month}</p>
+                      </div>
+                      <p className="font-black text-rose-400">-{formatCurrency(exp.amount)}</p>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="bg-white/5 p-6 rounded-[32px] border border-white/10 space-y-4">
                   <input 
                     type="text" 
                     placeholder="Expense Name (e.g. Rent)"
@@ -691,28 +1015,70 @@ export default function App() {
                       id="onboarding-expense-day"
                     />
                   </div>
+                  {settings.is_couple_mode && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {['rodrigo', 'partner', 'shared'].map(owner => (
+                        <button
+                          key={owner}
+                          id={`exp-owner-${owner}`}
+                          onClick={(e) => {
+                            const btns = e.currentTarget.parentElement?.querySelectorAll('button');
+                            btns?.forEach(b => b.classList.remove('bg-white', 'text-zinc-900'));
+                            btns?.forEach(b => b.classList.add('bg-white/10', 'text-white'));
+                            e.currentTarget.classList.remove('bg-white/10', 'text-white');
+                            e.currentTarget.classList.add('bg-white', 'text-zinc-900');
+                          }}
+                          className={cn(
+                            "py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                            owner === 'shared' ? "bg-white text-zinc-900" : "bg-white/10 text-white"
+                          )}
+                        >
+                          {owner === 'rodrigo' ? 'Rodrigo' : owner === 'partner' ? 'Partner' : 'Both'}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <button 
                     onClick={() => {
                       const name = (document.getElementById('onboarding-expense-name') as HTMLInputElement).value;
                       const amount = Number((document.getElementById('onboarding-expense-amount') as HTMLInputElement).value);
                       const day = Number((document.getElementById('onboarding-expense-day') as HTMLInputElement).value);
+                      let owner = 'shared';
+                      if (settings.is_couple_mode) {
+                        const activeBtn = document.querySelector('[id^="exp-owner-"].bg-white');
+                        if (activeBtn) owner = activeBtn.id.replace('exp-owner-', '');
+                      }
+                      
                       if (name && amount) {
-                        setFixedExpenses([...fixedExpenses, { id: Date.now(), name, amount, day_of_month: day }]);
-                        setOnboardingStep(3);
+                        setOnboardingData(prev => ({
+                          ...prev,
+                          expenses: [...prev.expenses, { name, amount, day_of_month: day, owner }]
+                        }));
+                        (document.getElementById('onboarding-expense-name') as HTMLInputElement).value = '';
+                        (document.getElementById('onboarding-expense-amount') as HTMLInputElement).value = '';
+                        (document.getElementById('onboarding-expense-day') as HTMLInputElement).value = '';
                       }
                     }}
-                    className="w-full bg-white text-zinc-900 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
+                    className="w-full bg-white/10 text-white py-3 rounded-2xl font-bold text-xs uppercase hover:bg-white/20 transition-all border border-dashed border-white/20"
                   >
-                    Next Step
+                    + Add Expense
                   </button>
                 </div>
+
+                <button 
+                  onClick={() => setOnboardingStep(4)}
+                  className="w-full bg-white text-zinc-900 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
+                >
+                  Next Step
+                </button>
               </div>
             )}
 
-            {onboardingStep === 3 && (
+            {/* Step 4: Weekly Spending */}
+            {onboardingStep === 4 && (
               <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Step 4: Weekly Spending</label>
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Step 5: Weekly Spending</label>
                   <p className="text-sm text-zinc-300">Estimate your variable weekly spending (food, leisure, etc).</p>
                 </div>
                 <div className="space-y-4">
@@ -726,8 +1092,25 @@ export default function App() {
                     />
                   </div>
                   <button 
-                    onClick={() => {
-                      handleSaveSettings({ ...settings, onboarding_completed: true });
+                    onClick={async () => {
+                      // Save all data
+                      try {
+                        const incRef = collection(db, 'users', user.uid, 'incomes');
+                        const expRef = collection(db, 'users', user.uid, 'fixedExpenses');
+                        
+                        await Promise.all([
+                          ...onboardingData.incomes.map(inc => setDoc(doc(incRef), inc)),
+                          ...onboardingData.expenses.map(exp => setDoc(doc(expRef), exp)),
+                          handleSaveSettings({ 
+                            ...settings, 
+                            onboarding_completed: true,
+                            balance_last_updated: new Date().toISOString()
+                          })
+                        ]);
+                        setRunTutorial(true);
+                      } catch (err) {
+                        handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/setup`);
+                      }
                     }}
                     className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-emerald-600 transition-all shadow-lg shadow-emerald-500/20"
                   >
@@ -736,19 +1119,10 @@ export default function App() {
                 </div>
               </div>
             )}
-
-            {onboardingStep === 0 && (
-              <button 
-                onClick={() => setOnboardingStep(1)}
-                className="w-full bg-white text-zinc-900 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-zinc-200 transition-all"
-              >
-                Continue
-              </button>
-            )}
           </div>
           
           <div className="flex justify-center gap-2">
-            {[0, 1, 2, 3].map(step => (
+            {[0, 1, 2, 3, 4].map(step => (
               <div 
                 key={step}
                 className={cn(
@@ -763,10 +1137,75 @@ export default function App() {
     );
   }
 
-  if (loading) return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  if (!isAuthReady) {
+    return (
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center">
+        <Loader2 className="w-10 h-10 text-indigo-600 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center p-6">
+        <div className="max-w-md w-full bg-white rounded-[32px] p-8 shadow-xl border border-zinc-100 text-center space-y-8">
+          <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center mx-auto text-white shadow-lg shadow-indigo-200">
+            <Wallet size={40} />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-3xl font-black text-zinc-900 tracking-tight">Provera</h1>
+            <p className="text-zinc-500 text-sm leading-relaxed">
+              Master your cash flow with AI-powered forecasting. 
+              Sign in to sync your data across devices.
+            </p>
+          </div>
+          <button
+            onClick={() => signInWithPopup(auth, googleProvider)}
+            className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-zinc-800 transition-all shadow-lg"
+          >
+            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+            Continue with Google
+          </button>
+          <div className="pt-4">
+            <p className="text-[10px] text-zinc-400 uppercase font-bold tracking-widest">
+              Securely powered by Google Cloud
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-zinc-50 flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <Loader2 className="w-10 h-10 text-indigo-600 animate-spin mx-auto" />
+          <p className="text-[10px] font-black uppercase tracking-widest text-zinc-400">Loading your finances...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-zinc-50 font-sans text-zinc-900 pb-24">
+      <Tutorial 
+        run={runTutorial} 
+        onFinish={() => setRunTutorial(false)} 
+      />
+
+      <AICoach 
+        isOpen={isAIPanelOpen}
+        onClose={() => setIsAIPanelOpen(false)}
+        analysis={aiAnalysis}
+        isAnalyzing={isAnalyzing}
+        onRunAnalysis={handleRunAIAnalysis}
+        chatHistory={chatHistory}
+        isAsking={isAsking}
+        onAsk={(q) => handleAskAI(undefined, q)}
+        onApplyAction={handleApplyAIAction}
+      />
+
       {/* Header */}
       <header className="bg-white border-b border-zinc-200 px-6 py-4 sticky top-0 z-40">
         <div className="max-w-md mx-auto flex items-center justify-between">
@@ -775,16 +1214,42 @@ export default function App() {
               <Wallet size={24} />
             </div>
             <div>
-              <h1 className="text-lg font-bold leading-none">Future Flow</h1>
+              <h1 className="text-lg font-bold leading-none">Provera</h1>
               <p className="text-[10px] text-zinc-500 uppercase tracking-widest mt-1">{t.forecast}</p>
             </div>
           </div>
-          <button className="p-2 text-zinc-400 hover:text-zinc-900 transition-colors relative">
-            <Bell size={20} />
-            {forecast.some(w => w.is_below_threshold) && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border-2 border-white"></span>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setRunTutorial(true)}
+              className="p-2 text-zinc-400 hover:text-zinc-900 transition-colors"
+              title="Start Tutorial"
+            >
+              <Info size={20} />
+            </button>
+            <div className="relative group">
+              <button className="w-10 h-10 rounded-xl overflow-hidden border border-zinc-200 hover:border-zinc-400 transition-all">
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt={user.displayName || 'User'} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full bg-zinc-100 flex items-center justify-center text-zinc-400">
+                    <UserIcon size={20} />
+                  </div>
+                )}
+              </button>
+              <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-2xl shadow-xl border border-zinc-100 p-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                <div className="px-3 py-2 border-b border-zinc-50 mb-1">
+                  <p className="text-xs font-bold text-zinc-900 truncate">{user.displayName}</p>
+                  <p className="text-[10px] text-zinc-500 truncate">{user.email}</p>
+                </div>
+                <button 
+                  onClick={() => signOut(auth)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                >
+                  <X size={14} /> Sign Out
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -822,8 +1287,49 @@ export default function App() {
               </p>
             </div>
 
+            {/* Goals Progress Card */}
+            {goals.length > 0 && (
+              <div className="bg-white rounded-3xl p-6 border border-zinc-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider flex items-center gap-2">
+                    <Target size={14} className="text-violet-500" /> {settings.language === 'pt' ? 'Objetivos Financeiros' : 'Financial Goals'}
+                  </h3>
+                </div>
+                <div className="space-y-4">
+                  {goals.filter(g => !g.is_completed).map(goal => {
+                    const progress = Math.min(100, Math.max(0, (effectiveBalance / goal.target_amount) * 100));
+                    const goalDate = parseISO(goal.target_date);
+                    const daysLeft = Math.ceil((goalDate.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24));
+                    
+                    return (
+                      <div key={goal.id} className="space-y-2">
+                        <div className="flex justify-between items-end">
+                          <div>
+                            <p className="text-sm font-bold text-zinc-900">{goal.name}</p>
+                            <p className="text-[10px] font-medium text-zinc-400 uppercase">
+                              {daysLeft > 0 ? `${daysLeft} days left` : 'Target date reached'}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-sm font-black text-zinc-900">{formatCurrency(goal.target_amount)}</p>
+                            <p className="text-[10px] font-bold text-violet-500 uppercase">{Math.round(progress)}%</p>
+                          </div>
+                        </div>
+                        <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-violet-500 rounded-full transition-all duration-1000" 
+                            style={{ width: `${progress}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Current Balance Card */}
-            <div className="bg-zinc-900 rounded-3xl p-6 text-white shadow-xl shadow-zinc-200 overflow-hidden relative">
+            <div id="current-balance-card" className="bg-zinc-900 rounded-3xl p-6 text-white shadow-xl shadow-zinc-200 overflow-hidden relative">
               <div className="relative z-10">
                 <div className="flex items-center justify-between">
                   <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider">{t.currentBalance}</p>
@@ -835,7 +1341,7 @@ export default function App() {
                     className="bg-white/10 px-2 py-1 rounded-lg flex items-center gap-1.5 hover:bg-white/20 transition-colors"
                   >
                     <Target size={12} className="text-zinc-400" />
-                    <span className="text-[10px] font-bold uppercase text-zinc-300">{settings.language === 'pt' ? 'Objetivo' : 'Goal'}: {formatCurrency(settings.safety_threshold)}</span>
+                    <span className="text-[10px] font-bold uppercase text-zinc-300">{settings.language === 'pt' ? 'Limite de Segurança' : 'Safety Limit'}: {formatCurrency(settings.safety_threshold)}</span>
                   </button>
                 </div>
                 <h2 
@@ -845,7 +1351,7 @@ export default function App() {
                   }}
                   className="text-4xl font-bold mt-2 tracking-tight cursor-pointer hover:text-zinc-300 transition-colors"
                 >
-                  {formatCurrency(settings.current_balance)}
+                  {formatCurrency(effectiveBalance)}
                 </h2>
                 
                 <div className="mt-8 grid grid-cols-2 gap-3">
@@ -1111,6 +1617,7 @@ export default function App() {
                     ))}
                   </div>
                   <button 
+                    id="simulation-button"
                     onClick={() => setIsSimPanelOpen(true)}
                     className={cn(
                       "flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold uppercase transition-all shadow-sm",
@@ -1124,7 +1631,7 @@ export default function App() {
                   </button>
                 </div>
               </div>
-              <div className="h-[280px] w-full">
+              <div id="forecast-chart" className="h-[280px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart key={forecastWeeks} data={forecast} margin={{ top: 20, right: 30, left: 0, bottom: 0 }}>
                     {highlightedWeek !== null && (
@@ -1147,6 +1654,7 @@ export default function App() {
                       tickLine={false} 
                       tick={{fontSize: 10, fill: '#a1a1aa'}} 
                       tickFormatter={(val) => format(parseISO(val), 'dd/MM')}
+                      minTickGap={30}
                     />
                     <YAxis hide domain={['auto', 'auto']} padding={{ top: 20, bottom: 20 }} />
                     <Tooltip 
@@ -1163,7 +1671,7 @@ export default function App() {
                       strokeDasharray="3 3" 
                       label={{ 
                         position: 'top', 
-                        value: 'Limit', 
+                        value: settings.language === 'pt' ? 'Limite' : 'Limit', 
                         fill: '#f43f5e', 
                         fontSize: 10, 
                         fontWeight: 'bold' 
@@ -1190,13 +1698,39 @@ export default function App() {
                         name="simulated_balance"
                       />
                     )}
+                    
+                    {/* Goals on Chart */}
+                    {goals.filter(g => !g.is_completed).map(goal => {
+                      const goalDate = parseISO(goal.target_date);
+                      const today = new Date();
+                      const maxDate = addWeeks(startOfWeek(today), forecastWeeks);
+                      
+                      if (isWithinInterval(goalDate, { start: today, end: maxDate })) {
+                        return (
+                          <ReferenceLine 
+                            key={goal.id}
+                            x={goal.target_date}
+                            stroke="#8b5cf6"
+                            strokeDasharray="5 5"
+                            label={{ 
+                              position: 'top', 
+                              value: `Goal: ${goal.name}`, 
+                              fill: '#8b5cf6', 
+                              fontSize: 10,
+                              fontWeight: 'bold'
+                            }}
+                          />
+                        );
+                      }
+                      return null;
+                    })}
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
             </div>
 
             {/* Forecast List */}
-            <div className="space-y-4">
+            <div id="weekly-timeline" className="space-y-4">
               <div className="flex items-center justify-between px-2">
                 <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider">{t.timeline}</h3>
                 <div className="flex items-center gap-2">
@@ -1306,27 +1840,28 @@ export default function App() {
                     <label className="text-[10px] font-bold text-zinc-500 uppercase">{t.currency}</label>
                     <select 
                       value={settings.currency}
-                      onChange={(e) => handleSaveSettings({...settings, currency: e.target.value})}
+                      onChange={(e) => handleCurrencyChange(e.target.value)}
                       className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
                     >
-                      <option value="CHF">CHF (Fr.)</option>
-                      <option value="EUR">EUR (€)</option>
-                      <option value="USD">USD ($)</option>
-                      <option value="GBP">GBP (£)</option>
-                      <option value="BRL">BRL (R$)</option>
+                      {SUPPORTED_CURRENCIES.map(curr => (
+                        <option key={curr.code} value={curr.code}>{curr.code} ({curr.symbol})</option>
+                      ))}
                     </select>
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-bold text-zinc-500 uppercase">{t.remittance}</label>
                     <select 
                       value={settings.remittance_currency}
-                      onChange={(e) => handleSaveSettings({...settings, remittance_currency: e.target.value})}
+                      onChange={(e) => {
+                        const newRemittance = e.target.value;
+                        const newRate = exchangeRates[newRemittance] || settings.exchange_rate;
+                        handleSaveSettings({...settings, remittance_currency: newRemittance, exchange_rate: newRate});
+                      }}
                       className="w-full bg-zinc-50 border-none rounded-2xl px-4 py-3 text-sm font-bold focus:ring-2 focus:ring-zinc-900 outline-none transition-all"
                     >
-                      <option value="EUR">EUR (€)</option>
-                      <option value="BRL">BRL (R$)</option>
-                      <option value="USD">USD ($)</option>
-                      <option value="GBP">GBP (£)</option>
+                      {SUPPORTED_CURRENCIES.filter(c => c.code !== settings.currency).map(curr => (
+                        <option key={curr.code} value={curr.code}>{curr.code} ({curr.symbol})</option>
+                      ))}
                     </select>
                   </div>
                 </div>
@@ -1466,7 +2001,15 @@ export default function App() {
                       </div>
                       <div>
                         <p className="text-sm font-bold">{exp.name}</p>
-                        <p className="text-[10px] text-zinc-400 font-medium mt-0.5">Day {exp.day_of_month}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-zinc-400 font-medium">Day {exp.day_of_month}</span>
+                          {settings.is_couple_mode && exp.owner && (
+                            <>
+                              <span className="w-1 h-1 bg-zinc-200 rounded-full"></span>
+                              <span className="text-[10px] bg-zinc-100 text-zinc-500 px-1.5 py-0.5 rounded-md font-bold uppercase">{exp.owner}</span>
+                            </>
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
@@ -1494,7 +2037,7 @@ export default function App() {
             <div className="flex flex-col items-center gap-4 pt-8 pb-12">
               <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Version: Beta 1.0.0</span>
               <button 
-                onClick={() => window.open('mailto:feedback@futureflow.app')}
+                onClick={() => window.open('mailto:feedback@provera.app')}
                 className="flex items-center gap-2 px-6 py-3 bg-zinc-100 text-zinc-600 rounded-2xl text-xs font-bold hover:bg-zinc-200 transition-all"
               >
                 <MessageSquare size={16} /> Send Feedback
@@ -1712,7 +2255,7 @@ export default function App() {
       </main>
 
       {/* Bottom Navigation */}
-      <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-zinc-200 px-6 py-3 pb-8 z-40">
+      <nav id="setup-tabs" className="fixed bottom-0 left-0 right-0 bg-white border-t border-zinc-200 px-6 py-3 pb-8 z-40">
         <div className="max-w-md mx-auto flex items-center justify-between">
           <button 
             onClick={() => setActiveTab('forecast')}
@@ -1759,6 +2302,7 @@ export default function App() {
 
       {/* Floating AI Button */}
       <button 
+        id="ai-coach-button"
         onClick={() => setIsAIPanelOpen(true)}
         className="fixed bottom-24 right-6 w-14 h-14 bg-indigo-600 text-white rounded-2xl shadow-2xl shadow-indigo-200 flex items-center justify-center hover:bg-indigo-700 transition-all active:scale-90 z-40 animate-bounce-slow"
       >
@@ -2139,7 +2683,7 @@ export default function App() {
                           "w-8 h-8 rounded-xl flex items-center justify-center shrink-0",
                           msg.role === 'user' ? "bg-zinc-900 text-white" : "bg-indigo-100 text-indigo-600"
                         )}>
-                          {msg.role === 'user' ? <User size={16} /> : <Bot size={16} />}
+                          {msg.role === 'user' ? <UserIcon size={16} /> : <Bot size={16} />}
                         </div>
                         <div className={cn(
                           "p-4 rounded-2xl text-xs font-medium max-w-[80%] shadow-sm",
@@ -2300,7 +2844,7 @@ export default function App() {
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Income Owner</label>
                   <div className="grid grid-cols-3 gap-2">
-                    {['user1', 'user2', 'shared'].map(owner => (
+                    {['rodrigo', 'partner', 'shared'].map(owner => (
                       <label key={owner} className="relative cursor-pointer">
                         <input 
                           type="radio" 
@@ -2310,7 +2854,29 @@ export default function App() {
                           className="peer sr-only"
                         />
                         <div className="flex items-center justify-center py-3 rounded-xl bg-zinc-50 border border-zinc-100 text-[10px] font-black uppercase text-zinc-400 peer-checked:bg-zinc-900 peer-checked:text-white peer-checked:border-zinc-900 transition-all">
-                          {owner === 'user1' ? 'User 1' : owner === 'user2' ? 'User 2' : 'Both'}
+                          {owner === 'rodrigo' ? 'Rodrigo' : owner === 'partner' ? 'Partner' : 'Both'}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {modalType === 'expense' && settings.is_couple_mode && (
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest px-1">Expense Owner</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['rodrigo', 'partner', 'shared'].map(owner => (
+                      <label key={owner} className="relative cursor-pointer">
+                        <input 
+                          type="radio" 
+                          name="owner" 
+                          value={owner} 
+                          defaultChecked={(editingItem?.owner || 'shared') === owner}
+                          className="peer sr-only"
+                        />
+                        <div className="flex items-center justify-center py-3 rounded-xl bg-zinc-50 border border-zinc-100 text-[10px] font-black uppercase text-zinc-400 peer-checked:bg-zinc-900 peer-checked:text-white peer-checked:border-zinc-900 transition-all">
+                          {owner === 'rodrigo' ? 'Rodrigo' : owner === 'partner' ? 'Partner' : 'Both'}
                         </div>
                       </label>
                     ))}
@@ -2348,6 +2914,7 @@ export default function App() {
         <SettingsQuickEdit 
           type={settingsModalType}
           settings={settings}
+          effectiveBalance={effectiveBalance}
           onClose={() => setIsSettingsModalOpen(false)}
           onSave={handleUpdateSettings}
         />
@@ -2456,14 +3023,15 @@ function ForecastExplanation({ week, onClose, formatCurrency, settings }: {
   );
 }
 
-function SettingsQuickEdit({ type, settings, onClose, onSave }: {
+function SettingsQuickEdit({ type, settings, effectiveBalance, onClose, onSave }: {
   type: 'balance' | 'spending' | 'threshold';
   settings: AppSettings;
+  effectiveBalance: number;
   onClose: () => void;
   onSave: (s: Partial<AppSettings>) => void;
 }) {
   const [value, setValue] = useState(
-    type === 'balance' ? settings.current_balance :
+    type === 'balance' ? effectiveBalance :
     type === 'spending' ? settings.weekly_spending_estimate :
     settings.safety_threshold
   );

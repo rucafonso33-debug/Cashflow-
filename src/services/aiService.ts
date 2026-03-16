@@ -20,17 +20,20 @@ export const generateFinancialAnalysis = async (data: {
 }): Promise<AIAnalysis> => {
   const ai = getAI();
   const prompt = `
-    Act as a Personal Financial Assistant specialized in cash flow management.
-    Analyze the following user financial data and provide smart insights and practical recommendations in English.
+    Act as Provera, a world-class Personal Financial Coach and Wealth Manager.
+    Your goal is to help the user achieve financial freedom by providing deep insights into their cash flow.
+    Analyze the following user financial data and provide strategic recommendations in English.
 
-    USER DATA:
+    USER CONTEXT:
     - Current Balance: ${data.settings.current_balance} ${data.settings.currency}
-    - Estimated Weekly Spending: ${data.settings.weekly_spending_estimate} ${data.settings.currency}
-    - Safety Limit: ${data.settings.safety_threshold} ${data.settings.currency}
-    - Couple Mode Active: ${data.settings.is_couple_mode ? 'Yes' : 'No'}
+    - Weekly Spending Estimate: ${data.settings.weekly_spending_estimate} ${data.settings.currency}
+    - Safety Threshold (Emergency Fund Goal): ${data.settings.safety_threshold} ${data.settings.currency}
+    - Couple Mode: ${data.settings.is_couple_mode ? 'Active' : 'Inactive'}
     
     FINANCIAL GOALS:
-    ${data.goals.map(g => `- ${g.name}: ${g.target_amount} ${data.settings.currency} by ${g.target_date} (Completed: ${g.is_completed ? 'Yes' : 'No'})`).join('\n')}
+    ${data.goals.length > 0 
+      ? data.goals.map(g => `- ${g.name}: Target ${g.target_amount} ${data.settings.currency} by ${g.target_date} (Status: ${g.is_completed ? 'Completed' : 'In Progress'})`).join('\n')
+      : 'No specific goals set yet. Suggest setting some (e.g., Travel, Investment, Emergency Fund).'}
 
     MONTHLY INCOMES:
     ${data.incomes.map(i => `- ${i.name}: ${i.amount} ${data.settings.currency} (Day ${i.day_of_month})`).join('\n')}
@@ -38,16 +41,23 @@ export const generateFinancialAnalysis = async (data: {
     FIXED EXPENSES:
     ${data.fixedExpenses.map(e => `- ${e.name}: ${e.amount} ${data.settings.currency} (Day ${e.day_of_month})`).join('\n')}
     
-    FUTURE EVENTS:
+    UPCOMING EVENTS:
     ${data.events.map(e => `- ${e.description}: ${e.amount} ${data.settings.currency} on ${e.date}`).join('\n')}
     
-    12-WEEK PROJECTION (PROJECTED BALANCE):
-    ${data.forecast.map(w => `- Week ${w.week_number}: ${w.projected_balance} ${data.settings.currency}`).join('\n')}
+    12-WEEK PROJECTION:
+    ${data.forecast.map(w => `- Week ${w.week_number}: Projected ${w.projected_balance} ${data.settings.currency}`).join('\n')}
     
-    ACTIVE SIMULATIONS:
-    - Weekly Spending Delta: ${data.simulation.weeklySpendingDelta} ${data.settings.currency}
-    - One-off Purchases: ${data.simulation.oneOffExpenses.map(e => `${e.description} (${e.amount} ${data.settings.currency})`).join(', ')}
-    - Income Changes: ${data.simulation.incomeChanges.map(e => `${e.description} (${e.amount} ${data.settings.currency})`).join(', ')}
+    SIMULATION IMPACT:
+    ${data.simulation.isActive 
+      ? `User is testing: ${data.simulation.weeklySpendingDelta} change in weekly spending, plus ${data.simulation.oneOffExpenses.length} simulated expenses.`
+      : 'No simulation active.'}
+
+    COACHING DIRECTIVES:
+    1. Assess Financial Health: 'Good' if balance > safety threshold for 12 weeks. 'Moderate' if it dips slightly. 'Risk' if it falls significantly below.
+    2. Goal Feasibility: Calculate if the user can reach their goals based on the 'projected remaining' monthly cash flow.
+    3. Optimization: Suggest specific cuts or adjustments to reach goals faster.
+    4. Risk Mitigation: Identify weeks with high risk and suggest moving events or reducing spending.
+    5. Encouragement: Be professional yet motivating.
 
     INSTRUCTIONS:
     1. Evaluate financial health (Good, Moderate, or Risk).
@@ -62,7 +72,15 @@ export const generateFinancialAnalysis = async (data: {
       "healthSummary": "A short sentence summarizing the situation",
       "healthStatus": "Good" | "Moderate" | "Risk",
       "insights": [
-        { "type": "risk" | "suggestion" | "impact" | "positive", "message": "The insight here" }
+        { 
+          "type": "risk" | "suggestion" | "impact" | "positive", 
+          "message": "The insight here",
+          "action": {
+            "type": "update_spending" | "update_threshold" | "add_event",
+            "value": any,
+            "label": "Button Label (e.g., 'Reduce spending to 400')"
+          }
+        }
       ],
       "suggestions": ["Practical suggestion 1", "Practical suggestion 2"]
     }
@@ -84,7 +102,16 @@ export const generateFinancialAnalysis = async (data: {
               type: Type.OBJECT,
               properties: {
                 type: { type: Type.STRING, enum: ["risk", "suggestion", "impact", "positive"] },
-                message: { type: Type.STRING }
+                message: { type: Type.STRING },
+                action: {
+                  type: Type.OBJECT,
+                  properties: {
+                    type: { type: Type.STRING, enum: ["update_spending", "update_threshold", "add_event"] },
+                    value: { type: Type.NUMBER },
+                    label: { type: Type.STRING }
+                  },
+                  required: ["type", "value", "label"]
+                }
               },
               required: ["type", "message"]
             }
@@ -108,10 +135,14 @@ export const askFinancialQuestion = async (
   history: { role: 'user' | 'model'; text: string }[]
 ): Promise<string> => {
   const systemInstruction = `
-    You are an intelligent Personal Financial Assistant. Answer questions about the user's finances based on the provided data.
+    You are Provera, a highly intelligent and professional Personal Financial Coach. 
+    Your tone is encouraging, data-driven, and strategic.
+    Answer questions about the user's finances based on the provided data.
     Be concise, practical, and always use English.
-    If the user asks if they can buy something, analyze the impact on the 12-week future balance.
-    If the user asks how much they can spend, suggest values that keep the balance above the safety limit (${data.settings.safety_threshold} ${data.settings.currency}).
+    
+    If the user asks if they can buy something, analyze the impact on the 12-week future balance and their financial goals.
+    If the user asks how much they can spend, suggest values that keep the balance above the safety threshold (${data.settings.safety_threshold} ${data.settings.currency}).
+    Always look for ways to optimize their cash flow.
 
     CURRENT DATA:
     ${JSON.stringify(data, null, 2)}

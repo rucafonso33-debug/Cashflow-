@@ -9,10 +9,11 @@ export interface AppSettings {
   language: 'en' | 'pt';
   onboarding_completed: boolean;
   last_exchange_update?: string;
+  balance_last_updated?: string;
 }
 
 export interface Income {
-  id?: number;
+  id?: string;
   name: string;
   amount: number;
   day_of_month: number;
@@ -20,14 +21,15 @@ export interface Income {
 }
 
 export interface FixedExpense {
-  id?: number;
+  id?: string;
   name: string;
   amount: number;
   day_of_month: number;
+  owner?: 'rodrigo' | 'ana' | 'shared';
 }
 
 export interface FutureEvent {
-  id?: number;
+  id?: string;
   description: string;
   amount: number;
   date: string; // ISO string
@@ -63,6 +65,11 @@ export interface SimulationState {
 export interface AIInsight {
   type: 'risk' | 'suggestion' | 'impact' | 'positive';
   message: string;
+  action?: {
+    type: 'update_spending' | 'update_threshold' | 'add_event';
+    value: any;
+    label: string;
+  };
 }
 
 export interface AIAnalysis {
@@ -78,7 +85,7 @@ export interface ChatMessage {
 }
 
 export interface FinancialGoal {
-  id?: number;
+  id?: string;
   name: string;
   target_amount: number;
   target_date: string; // ISO string

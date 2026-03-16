@@ -1,7 +1,7 @@
 {
-  "name": "CashFlow Pro",
-  "short_name": "CashFlow",
-  "description": "Gestão Financeira Inteligente com IA",
+  "name": "Provera – Financial Planner",
+  "short_name": "Provera",
+  "description": "Smart Financial Planning with AI",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
