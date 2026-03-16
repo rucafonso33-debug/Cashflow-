@@ -1024,7 +1024,14 @@ function App() {
             </p>
           </div>
           <button
-            onClick={() => signInWithPopup(auth, googleProvider)}
+            onClick={async () => {
+              try {
+                await signInWithPopup(auth, googleProvider);
+              } catch (error: any) {
+                console.error("Login error:", error);
+                alert(`Login failed: ${error.message}. If you are on Vercel, make sure to add your domain to Firebase Authorized Domains.`);
+              }
+            }}
             className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-zinc-800 transition-all shadow-lg"
           >
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
