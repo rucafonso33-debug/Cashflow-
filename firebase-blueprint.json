@@ -14,7 +14,8 @@
         "exchange_rate": { "type": "number" },
         "language": { "type": "string", "enum": ["en", "pt"] },
         "onboarding_completed": { "type": "boolean" },
-        "last_exchange_update": { "type": "string", "format": "date-time" }
+        "last_exchange_update": { "type": "string", "format": "date-time" },
+        "balance_last_updated": { "type": "string", "format": "date-time" }
       },
       "required": ["current_balance", "weekly_spending_estimate", "safety_threshold", "is_couple_mode", "currency", "language", "onboarding_completed"]
     },

@@ -91,7 +91,7 @@ service cloud.firestore {
 
     function isValidSettings(data) {
       return hasRequiredFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'currency', 'language', 'onboarding_completed']) &&
-             hasOnlyAllowedFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'currency', 'remittance_currency', 'exchange_rate', 'language', 'onboarding_completed', 'last_exchange_update']) &&
+             hasOnlyAllowedFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'currency', 'remittance_currency', 'exchange_rate', 'language', 'onboarding_completed', 'last_exchange_update', 'balance_last_updated']) &&
              data.current_balance is number &&
              data.weekly_spending_estimate is number &&
              data.safety_threshold is number &&
@@ -101,7 +101,8 @@ service cloud.firestore {
              data.onboarding_completed is bool &&
              (!('remittance_currency' in data) || (data.remittance_currency is string && data.remittance_currency.size() <= 10)) &&
              (!('exchange_rate' in data) || data.exchange_rate is number) &&
-             (!('last_exchange_update' in data) || isValidDateString(data.last_exchange_update));
+             (!('last_exchange_update' in data) || isValidDateString(data.last_exchange_update)) &&
+             (!('balance_last_updated' in data) || isValidDateString(data.balance_last_updated));
     }
 
     function isValidIncome(data) {
