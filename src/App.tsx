@@ -64,8 +64,6 @@ import {
   db, 
   googleProvider, 
   signInWithPopup, 
-  signInWithRedirect,
-  getRedirectResult,
   signOut, 
   onAuthStateChanged, 
   doc, 
@@ -78,6 +76,8 @@ import {
   handleFirestoreError,
   OperationType,
   User
+} ,
+  setupAuthPersistence
 } from './firebase';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Tutorial } from './components/Tutorial';
@@ -182,12 +182,9 @@ function App() {
     });
 
     // Handle redirect result
-    getRedirectResult(auth).then((result) => {
       if (result?.user) {
-        console.log("Redirect login success:", result.user.email);
       }
     }).catch((error) => {
-      console.error("Redirect login error:", error);
       if (error.code === 'auth/unauthorized-domain') {
         alert(`Domain not authorized. Please add ${window.location.hostname} to Firebase Authorized Domains.`);
       }
@@ -1125,7 +1122,8 @@ function App() {
               onClick={async () => {
                 try {
                   console.log("Starting popup login...");
-                  await signInWithPopup(auth, googleProvider);
+                  await setupAuthPersistence();
+                await signInWithPopup(auth, googleProvider);
                 } catch (error: any) {
                   console.error("Popup login error:", error);
                   if (error.code === 'auth/popup-blocked') {
@@ -1146,16 +1144,12 @@ function App() {
             <button
               onClick={async () => {
                 try {
-                  console.log("Starting redirect login...");
-                  await signInWithRedirect(auth, googleProvider);
                 } catch (error: any) {
-                  console.error("Redirect login error:", error);
                   alert(`Redirect failed: ${error.message}`);
                 }
               }}
               className="w-full bg-white text-zinc-600 py-3 rounded-2xl font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-zinc-50 transition-all border border-zinc-200"
             >
-              Trouble logging in? Try Redirect
             </button>
           </div>
           <div className="pt-4">
