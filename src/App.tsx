@@ -75,8 +75,7 @@ import {
   getDocs,
   handleFirestoreError,
   OperationType,
-  User
-} ,
+  User,
   setupAuthPersistence
 } from './firebase';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -179,15 +178,6 @@ function App() {
       console.log("Auth state changed:", user ? "Logged in" : "Logged out");
       setUser(user);
       setIsAuthReady(true);
-    });
-
-    // Handle redirect result
-      if (result?.user) {
-      }
-    }).catch((error) => {
-      if (error.code === 'auth/unauthorized-domain') {
-        alert(`Domain not authorized. Please add ${window.location.hostname} to Firebase Authorized Domains.`);
-      }
     });
 
     return () => unsubscribe();

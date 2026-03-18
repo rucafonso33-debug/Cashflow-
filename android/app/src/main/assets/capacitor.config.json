@@ -1,5 +1,9 @@
 {
 	"appId": "com.provera.app",
 	"appName": "Provera",
-	"webDir": "dist"
+	"webDir": "dist",
+	"server": {
+		"hostname": "provera-finance.vercel.app",
+		"androidScheme": "https"
+	}
 }
