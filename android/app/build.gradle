@@ -14,8 +14,12 @@ android {
         applicationId "com.provera.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 3
+
+        // 🔥 VERSION CODE AUTOMÁTICO
+        def autoVersionCode = (int)(System.currentTimeMillis() / 1000)
+        versionCode autoVersionCode
         versionName "1.2"
+
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
             ignoreAssetsPattern = '!.svn:!.git:!ds_store:!*scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
