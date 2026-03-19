@@ -1,13 +1,14 @@
 import { initializeApp } from 'firebase/app';
 import {
-  getAuth,
+  initializeAuth,
+  indexedDBLocalPersistence,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   onAuthStateChanged,
-  User,
-  setPersistence,
-  browserLocalPersistence
+  User
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -42,16 +43,15 @@ const firestoreDatabaseId =
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firestoreDatabaseId);
-export const auth = getAuth(app);
+export const auth = initializeAuth(app, {
+  persistence: indexedDBLocalPersistence,
+});
 export const googleProvider = new GoogleAuthProvider();
 
 googleProvider.setCustomParameters({
   prompt: 'select_account',
 });
 
-export async function setupAuthPersistence() {
-  await setPersistence(auth, browserLocalPersistence);
-}
 
 export enum OperationType {
   CREATE = 'create',
@@ -119,6 +119,8 @@ testConnection();
 
 export {
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   signOut,
   onAuthStateChanged,
   doc,

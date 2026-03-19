@@ -59,24 +59,25 @@ import {
   isSameDay,
   startOfDay
 } from 'date-fns';
-import { 
-  auth, 
-  db, 
-  googleProvider, 
-  signInWithPopup, 
-  signOut, 
-  onAuthStateChanged, 
-  doc, 
-  collection, 
-  onSnapshot, 
-  setDoc, 
-  updateDoc, 
-  deleteDoc, 
+import {
+  auth,
+  db,
+  googleProvider,
+  signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
+  signOut,
+  onAuthStateChanged,
+  doc,
+  collection,
+  onSnapshot,
+  setDoc,
+  updateDoc,
+  deleteDoc,
   getDocs,
   handleFirestoreError,
   OperationType,
-  User,
-  setupAuthPersistence
+  User
 } from './firebase';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Tutorial } from './components/Tutorial';
@@ -179,6 +180,16 @@ function App() {
       setUser(user);
       setIsAuthReady(true);
     });
+
+    getRedirectResult(auth)
+      .then((result) => {
+        if (result?.user) {
+          console.log("Redirect login success:", result.user.email);
+        }
+      })
+      .catch((error) => {
+        console.error("Redirect login error:", error);
+      });
 
     return () => unsubscribe();
   }, []);
@@ -1112,8 +1123,8 @@ function App() {
               onClick={async () => {
                 try {
                   console.log("Starting popup login...");
-                  await setupAuthPersistence();
-                await signInWithPopup(auth, googleProvider);
+                  
+                await signInWithRedirect(auth, googleProvider);
                 } catch (error: any) {
                   console.error("Popup login error:", error);
                   if (error.code === 'auth/popup-blocked') {
