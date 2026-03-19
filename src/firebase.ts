@@ -1,7 +1,5 @@
-import { initializeApp } from 'firebase/app';
 import {
-  initializeAuth,
-  indexedDBLocalPersistence,
+  getAuth,
   GoogleAuthProvider,
   signInWithPopup,
   signInWithRedirect,
@@ -43,9 +41,7 @@ const firestoreDatabaseId =
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firestoreDatabaseId);
-export const auth = initializeAuth(app, {
-  persistence: indexedDBLocalPersistence,
-});
+export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 googleProvider.setCustomParameters({
