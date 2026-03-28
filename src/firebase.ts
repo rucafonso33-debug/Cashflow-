@@ -1,38 +1,26 @@
 import { initializeApp } from 'firebase/app';
-import {
-  getAuth,
-  signOut,
-  onAuthStateChanged,
-  User,
-} from 'firebase/auth';
-import {
-  getFirestore,
-  doc,
-  collection,
-  onSnapshot,
-  setDoc,
-  updateDoc,
-  deleteDoc,
-  getDoc,
-  getDocs,
-  query,
-  where,
-  getDocFromServer,
-} from 'firebase/firestore';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged, User, signInWithCredential } from 'firebase/auth';
+import { getFirestore, doc, collection, onSnapshot, setDoc, updateDoc, deleteDoc, getDoc, getDocs, query, where, getDocFromServer } from 'firebase/firestore';
+import firebaseConfigInternal from '../firebase-applet-config.json';
 
+// Use environment variables if available (Vercel), otherwise fallback to internal config (AI Studio)
 const firebaseConfig = {
-  apiKey: "AIzaSyAbecmnRhoqaegoFC_pKvkljIWEQwg3K6B8",
-  authDomain: "gen-lang-client-0682492679.firebaseapp.com",
-  projectId: "gen-lang-client-0682492679",
-  storageBucket: "gen-lang-client-0682492679.firebasestorage.app",
-  messagingSenderId: "594839173707",
-  appId: "1:594839173707:web:7fb45d4a07b2bab32a2bce",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || firebaseConfigInternal.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || firebaseConfigInternal.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || firebaseConfigInternal.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || firebaseConfigInternal.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || firebaseConfigInternal.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || firebaseConfigInternal.appId,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID || firebaseConfigInternal.measurementId,
 };
+
+const firestoreDatabaseId = import.meta.env.VITE_FIREBASE_FIRESTORE_DATABASE_ID || firebaseConfigInternal.firestoreDatabaseId;
 
 // Initialize Firebase SDK
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app);
+export const db = getFirestore(app, firestoreDatabaseId);
 export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
 
 export enum OperationType {
   CREATE = 'create',
@@ -59,14 +47,10 @@ export interface FirestoreErrorInfo {
       email: string | null;
       photoUrl: string | null;
     }[];
-  };
+  }
 }
 
-export function handleFirestoreError(
-  error: unknown,
-  operationType: OperationType,
-  path: string | null
-) {
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
@@ -75,19 +59,17 @@ export function handleFirestoreError(
       emailVerified: auth.currentUser?.emailVerified,
       isAnonymous: auth.currentUser?.isAnonymous,
       tenantId: auth.currentUser?.tenantId,
-      providerInfo:
-        auth.currentUser?.providerData.map((provider) => ({
-          providerId: provider.providerId,
-          displayName: provider.displayName,
-          email: provider.email,
-          photoUrl: provider.photoURL,
-        })) || [],
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
     },
     operationType,
-    path,
-  };
-
-  console.error('Firestore Error:', JSON.stringify(errInfo));
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
@@ -96,18 +78,18 @@ async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message.includes('the client is offline')
-    ) {
-      console.error('Please check your Firebase configuration.');
+    if(error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration. ");
     }
   }
 }
-
 testConnection();
 
 export {
+  signInWithPopup,
+  signInWithRedirect,
+  signInWithCredential,
+  getRedirectResult,
   signOut,
   onAuthStateChanged,
   doc,
@@ -119,7 +101,6 @@ export {
   getDoc,
   getDocs,
   query,
-  where,
+  where
 };
-
 export type { User };

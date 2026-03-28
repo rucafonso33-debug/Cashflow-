@@ -13,25 +13,29 @@ service cloud.firestore {
     //   - weekly_spending_estimate: number (required)
     //   - safety_threshold: number (required)
     //   - is_couple_mode: boolean (required)
+    //   - user_name: string (required)
+    //   - partner_name: string (required)
     //   - currency: string (required)
     //   - remittance_currency: string (optional)
     //   - exchange_rate: number (optional)
-    //   - language: string (required, enum: ['en', 'pt'])
+    //   - language: string (required)
     //   - onboarding_completed: boolean (required)
     //   - last_exchange_update: string (optional, ISO 8601)
+    //   - balance_last_updated: string (optional, ISO 8601)
     //
     // Collection: users/{userId}/incomes
     // Fields:
     //   - name: string (required)
     //   - amount: number (required)
     //   - day_of_month: int (required, 1-31)
-    //   - owner: string (required, enum: ['rodrigo', 'ana', 'shared'])
+    //   - owner: string (required, enum: ['me', 'partner', 'shared'])
     //
     // Collection: users/{userId}/fixedExpenses
     // Fields:
     //   - name: string (required)
     //   - amount: number (required)
     //   - day_of_month: int (required, 1-31)
+    //   - owner: string (optional, enum: ['me', 'partner', 'shared'])
     //
     // Collection: users/{userId}/events
     // Fields:
@@ -90,14 +94,16 @@ service cloud.firestore {
     // ===============================================================
 
     function isValidSettings(data) {
-      return hasRequiredFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'currency', 'language', 'onboarding_completed']) &&
-             hasOnlyAllowedFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'currency', 'remittance_currency', 'exchange_rate', 'language', 'onboarding_completed', 'last_exchange_update', 'balance_last_updated']) &&
+      return hasRequiredFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'user_name', 'partner_name', 'currency', 'language', 'onboarding_completed']) &&
+             hasOnlyAllowedFields(['current_balance', 'weekly_spending_estimate', 'safety_threshold', 'is_couple_mode', 'user_name', 'partner_name', 'currency', 'remittance_currency', 'exchange_rate', 'language', 'onboarding_completed', 'last_exchange_update', 'balance_last_updated']) &&
              data.current_balance is number &&
              data.weekly_spending_estimate is number &&
              data.safety_threshold is number &&
              data.is_couple_mode is bool &&
+             data.user_name is string && data.user_name.size() <= 100 &&
+             data.partner_name is string && data.partner_name.size() <= 100 &&
              data.currency is string && data.currency.size() <= 10 &&
-             data.language in ['en', 'pt'] &&
+             data.language in ['en', 'pt', 'es', 'fr', 'de', 'it', 'zh', 'ja', 'hi'] &&
              data.onboarding_completed is bool &&
              (!('remittance_currency' in data) || (data.remittance_currency is string && data.remittance_currency.size() <= 10)) &&
              (!('exchange_rate' in data) || data.exchange_rate is number) &&
@@ -111,15 +117,16 @@ service cloud.firestore {
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              data.amount is number &&
              data.day_of_month is int && data.day_of_month >= 1 && data.day_of_month <= 31 &&
-             data.owner in ['rodrigo', 'ana', 'shared'];
+             data.owner in ['me', 'partner', 'shared'];
     }
 
     function isValidFixedExpense(data) {
       return hasRequiredFields(['name', 'amount', 'day_of_month']) &&
-             hasOnlyAllowedFields(['name', 'amount', 'day_of_month']) &&
+             hasOnlyAllowedFields(['name', 'amount', 'day_of_month', 'owner']) &&
              data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
              data.amount is number &&
-             data.day_of_month is int && data.day_of_month >= 1 && data.day_of_month <= 31;
+             data.day_of_month is int && data.day_of_month >= 1 && data.day_of_month <= 31 &&
+             (!('owner' in data) || data.owner in ['me', 'partner', 'shared']);
     }
 
     function isValidEvent(data) {

@@ -59,24 +59,30 @@ import {
   isSameDay,
   startOfDay
 } from 'date-fns';
-import {
-  auth,
-  db,
-  signOut,
-  onAuthStateChanged,
-  doc,
-  collection,
-  onSnapshot,
-  setDoc,
-  updateDoc,
-  deleteDoc,
+import { 
+  auth, 
+  db, 
+  googleProvider, 
+  signInWithPopup, 
+  signInWithRedirect,
+  signInWithCredential,
+  getRedirectResult,
+  signOut, 
+  onAuthStateChanged, 
+  doc, 
+  collection, 
+  onSnapshot, 
+  setDoc, 
+  updateDoc, 
+  deleteDoc, 
   getDocs,
   handleFirestoreError,
   OperationType,
   User
 } from './firebase';
-import { GoogleAuth } from '@codetrix-studio/capacitor-google-auth';
-import { GoogleAuthProvider, signInWithCredential } from 'firebase/auth';
+import { Capacitor } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
+import { GoogleAuthProvider } from 'firebase/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Tutorial } from './components/Tutorial';
 import { AICoach } from './components/AICoach';
@@ -173,16 +179,22 @@ function App() {
 
   // Auth Listener
   useEffect(() => {
-    GoogleAuth.initialize({
-      scopes: ['profile', 'email'],
-      serverClientId: '594839173707-t4524i86tkgbpvp6a36rib20620uofpd.apps.googleusercontent.com',
-      forceCodeForRefreshToken: false,
-    });
-
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       console.log("Auth state changed:", user ? "Logged in" : "Logged out");
       setUser(user);
       setIsAuthReady(true);
+    });
+
+    // Handle redirect result
+    getRedirectResult(auth).then((result) => {
+      if (result?.user) {
+        console.log("Redirect login success:", result.user.email);
+      }
+    }).catch((error) => {
+      console.error("Redirect login error:", error);
+      if (error.code === 'auth/unauthorized-domain') {
+        alert(`Domain not authorized. Please add ${window.location.hostname} to Firebase Authorized Domains.`);
+      }
     });
 
     return () => unsubscribe();
@@ -195,24 +207,25 @@ function App() {
     const userId = user.uid;
 
     const settingsUnsubscribe = onSnapshot(doc(db, 'users', userId, 'settings', 'current'), (snapshot) => {
+      const initialSettings: AppSettings = {
+        current_balance: 0,
+        weekly_spending_estimate: 0,
+        safety_threshold: 1000,
+        is_couple_mode: true,
+        user_name: 'Me',
+        partner_name: 'Partner',
+        currency: 'CHF',
+        remittance_currency: 'EUR',
+        exchange_rate: 1.05,
+        language: 'en',
+        onboarding_completed: false
+      };
+
       if (snapshot.exists()) {
-        const data = snapshot.data() as AppSettings;
+        const data = { ...initialSettings, ...snapshot.data() } as AppSettings;
         setSettings(data);
       } else {
         // Initialize settings if they don't exist
-        const initialSettings: AppSettings = {
-          current_balance: 0,
-          weekly_spending_estimate: 0,
-          safety_threshold: 1000,
-          is_couple_mode: true,
-          user_name: 'Me',
-          partner_name: 'Partner',
-          currency: 'CHF',
-          remittance_currency: 'EUR',
-          exchange_rate: 1.05,
-          language: 'en',
-          onboarding_completed: false
-        };
         setDoc(doc(db, 'users', userId, 'settings', 'current'), initialSettings)
           .catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${userId}/settings/current`));
       }
@@ -342,8 +355,17 @@ function App() {
           ? new Date().toISOString() 
           : newSettings.balance_last_updated || settings.balance_last_updated
       };
-      await setDoc(doc(db, 'users', user.uid, 'settings', 'current'), settingsToSave);
-      setSettings(settingsToSave);
+      
+      // Remove undefined values to prevent Firestore errors
+      const cleanSettings: any = {};
+      Object.keys(settingsToSave).forEach(key => {
+        if (settingsToSave[key as keyof AppSettings] !== undefined && key !== 'id') {
+          cleanSettings[key] = settingsToSave[key as keyof AppSettings];
+        }
+      });
+
+      await setDoc(doc(db, 'users', user.uid, 'settings', 'current'), cleanSettings);
+      setSettings(cleanSettings as AppSettings);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/settings/current`);
     }
@@ -594,54 +616,69 @@ function App() {
           ? new Date().toISOString() 
           : settings.balance_last_updated
       };
-      await setDoc(doc(db, 'users', user.uid, 'settings', 'current'), updated, { merge: true });
-      setSettings(updated);
+      
+      // Remove undefined values to prevent Firestore errors
+      const cleanUpdated: any = {};
+      Object.keys(updated).forEach(key => {
+        if (updated[key as keyof AppSettings] !== undefined && key !== 'id') {
+          cleanUpdated[key] = updated[key as keyof AppSettings];
+        }
+      });
+
+      await setDoc(doc(db, 'users', user.uid, 'settings', 'current'), cleanUpdated, { merge: true });
+      setSettings(cleanUpdated as AppSettings);
       setIsSettingsModalOpen(false);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/settings/current`);
     }
   };
 
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+
   const handleResetData = async () => {
     if (!user) return;
-    if (window.confirm('Are you sure you want to reset all financial data? This cannot be undone.')) {
-      try {
-        setLoading(true);
-        const userId = user.uid;
+    try {
+      setLoading(true);
+      const userId = user.uid;
 
-        // 1. Reset Settings to trigger onboarding
-        const initialSettings: AppSettings = {
-          current_balance: 0,
-          weekly_spending_estimate: 0,
-          safety_threshold: 1000,
-          is_couple_mode: true,
-          user_name: 'Me',
-          partner_name: 'Partner',
-          currency: 'CHF',
-          remittance_currency: 'EUR',
-          exchange_rate: 1.05,
-          language: 'en',
-          onboarding_completed: false
-        };
-        await setDoc(doc(db, 'users', userId, 'settings', 'current'), initialSettings);
+      // 1. Reset Settings to trigger onboarding
+      const initialSettings: AppSettings = {
+        current_balance: 0,
+        weekly_spending_estimate: 0,
+        safety_threshold: 1000,
+        is_couple_mode: true,
+        user_name: 'Me',
+        partner_name: 'Partner',
+        currency: 'CHF',
+        remittance_currency: 'EUR',
+        exchange_rate: 1.05,
+        language: 'en',
+        onboarding_completed: false
+      };
+      await setDoc(doc(db, 'users', userId, 'settings', 'current'), initialSettings);
 
-        // 2. Clear all sub-collections
-        const collectionsToClear = ['incomes', 'fixedExpenses', 'events', 'goals'];
-        for (const colName of collectionsToClear) {
-          const colRef = collection(db, 'users', userId, colName);
-          const snapshot = await getDocs(colRef);
-          const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'users', userId, colName, d.id)));
-          await Promise.all(deletePromises);
-        }
-
-        localStorage.removeItem('futureflow_data');
-        window.location.reload();
-      } catch (error) {
-        console.error("Reset error:", error);
-        alert("Failed to reset data. Please try again.");
-      } finally {
-        setLoading(false);
+      // 2. Clear all sub-collections
+      const collectionsToClear = ['incomes', 'fixedExpenses', 'events', 'goals'];
+      for (const colName of collectionsToClear) {
+        const colRef = collection(db, 'users', userId, colName);
+        const snapshot = await getDocs(colRef);
+        const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'users', userId, colName, d.id)));
+        await Promise.all(deletePromises);
       }
+
+      localStorage.removeItem('futureflow_data');
+      setIncomes([]);
+      setFixedExpenses([]);
+      setEvents([]);
+      setGoals([]);
+      setSettings(initialSettings);
+      setOnboardingData({ incomes: [], expenses: [] });
+      setShowResetConfirm(false);
+    } catch (error) {
+      console.error("Reset error:", error);
+      alert(`Failed to reset data: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1116,30 +1153,49 @@ function App() {
             <button
               onClick={async () => {
                 try {
-                  const googleUser = await GoogleAuth.signIn();
-                  const idToken = googleUser.authentication?.idToken;
-
-                  if (!idToken) {
-                    throw new Error('Google login sem idToken');
+                  if (Capacitor.isNativePlatform()) {
+                    console.log("Starting native Capacitor login...");
+                    const result = await FirebaseAuthentication.signInWithGoogle();
+                    if (result.credential?.idToken) {
+                      const credential = GoogleAuthProvider.credential(result.credential.idToken);
+                      await signInWithCredential(auth, credential);
+                    } else {
+                      throw new Error("No ID token returned from Google Sign-In");
+                    }
+                  } else {
+                    console.log("Starting popup login...");
+                    await signInWithPopup(auth, googleProvider);
                   }
-
-                  const credential = GoogleAuthProvider.credential(idToken);
-                  await signInWithCredential(auth, credential);
                 } catch (error: any) {
-                  console.error("Google native login error:", error);
-                  alert(
-                    `Login failed: ${JSON.stringify({
-                      message: error?.message,
-                      code: error?.code,
-                      error: error,
-                    })}`
-                  );
+                  console.error("Login error:", error);
+                  if (error.code === 'auth/popup-blocked') {
+                    alert("Popup blocked! Please allow popups for this site or try the 'Redirect' option below.");
+                  } else if (error.code === 'auth/unauthorized-domain') {
+                    alert(`Domain not authorized. Please add ${window.location.hostname} to Firebase Authorized Domains.`);
+                  } else {
+                    alert(`Login failed: ${error.message}`);
+                  }
                 }
               }}
               className="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest flex items-center justify-center gap-3 hover:bg-zinc-800 transition-all shadow-lg"
             >
               <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
               Continue with Google
+            </button>
+
+            <button
+              onClick={async () => {
+                try {
+                  console.log("Starting redirect login...");
+                  await signInWithRedirect(auth, googleProvider);
+                } catch (error: any) {
+                  console.error("Redirect login error:", error);
+                  alert(`Redirect failed: ${error.message}`);
+                }
+              }}
+              className="w-full bg-white text-black py-3 rounded-2xl font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-zinc-100 transition-all border border-zinc-300"
+            >
+              Trouble logging in? Try Redirect
             </button>
           </div>
           <div className="pt-4">
@@ -1918,7 +1974,7 @@ function App() {
                 <MessageSquare size={16} /> Send Feedback
               </button>
               <button 
-                onClick={handleResetData}
+                onClick={() => setShowResetConfirm(true)}
                 className="text-[10px] font-bold text-rose-500 uppercase hover:text-rose-600 transition-colors"
               >
                 Reset Financial Data
@@ -2131,6 +2187,32 @@ function App() {
                   </button>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Reset Confirmation Modal */}
+        {showResetConfirm && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
+              <h3 className="text-xl font-black text-zinc-900 mb-2">Reset All Data?</h3>
+              <p className="text-sm text-zinc-500 mb-6">
+                Are you sure you want to reset all financial data? This action cannot be undone.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowResetConfirm(false)}
+                  className="flex-1 py-3 bg-zinc-100 text-zinc-600 rounded-xl font-bold hover:bg-zinc-200 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleResetData}
+                  className="flex-1 py-3 bg-rose-500 text-white rounded-xl font-bold hover:bg-rose-600 transition-colors"
+                >
+                  Yes, Reset
+                </button>
+              </div>
             </div>
           </div>
         )}

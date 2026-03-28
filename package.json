@@ -15,10 +15,10 @@
     "build:mobile": "npm run build && npx cap copy && npx cap sync"
   },
   "dependencies": {
+    "@capacitor-firebase/authentication": "^8.1.0",
     "@capacitor/android": "^8.2.0",
     "@capacitor/cli": "^8.2.0",
     "@capacitor/core": "^8.2.0",
-    "@codetrix-studio/capacitor-google-auth": "^3.4.0-rc.4",
     "@google/genai": "^1.29.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

@@ -9,15 +9,17 @@
         "weekly_spending_estimate": { "type": "number" },
         "safety_threshold": { "type": "number" },
         "is_couple_mode": { "type": "boolean" },
+        "user_name": { "type": "string" },
+        "partner_name": { "type": "string" },
         "currency": { "type": "string" },
         "remittance_currency": { "type": "string" },
         "exchange_rate": { "type": "number" },
-        "language": { "type": "string", "enum": ["en", "pt"] },
+        "language": { "type": "string", "enum": ["en", "pt", "es", "fr", "de", "it", "zh", "ja", "hi"] },
         "onboarding_completed": { "type": "boolean" },
         "last_exchange_update": { "type": "string", "format": "date-time" },
         "balance_last_updated": { "type": "string", "format": "date-time" }
       },
-      "required": ["current_balance", "weekly_spending_estimate", "safety_threshold", "is_couple_mode", "currency", "language", "onboarding_completed"]
+      "required": ["current_balance", "weekly_spending_estimate", "safety_threshold", "is_couple_mode", "user_name", "partner_name", "currency", "language", "onboarding_completed"]
     },
     "Income": {
       "title": "Income",
@@ -27,7 +29,7 @@
         "name": { "type": "string" },
         "amount": { "type": "number" },
         "day_of_month": { "type": "integer" },
-        "owner": { "type": "string", "enum": ["rodrigo", "ana", "shared"] }
+        "owner": { "type": "string", "enum": ["me", "partner", "shared"] }
       },
       "required": ["name", "amount", "day_of_month", "owner"]
     },
@@ -38,7 +40,8 @@
       "properties": {
         "name": { "type": "string" },
         "amount": { "type": "number" },
-        "day_of_month": { "type": "integer" }
+        "day_of_month": { "type": "integer" },
+        "owner": { "type": "string", "enum": ["me", "partner", "shared"] }
       },
       "required": ["name", "amount", "day_of_month"]
     },
